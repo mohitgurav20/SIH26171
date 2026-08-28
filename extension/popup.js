@@ -199,6 +199,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Voice Mic Toggle — Delegates to background/offscreen for MV3 mic access
+  // Uses Web Speech API for real-time live preview (what the user is saying)
+  let speechRecognition = null;
+  const liveTranscript = document.getElementById('live-transcript');
+  const voiceStopBtn = document.getElementById('voice-stop-btn');
+
+  if (voiceStopBtn) {
+    voiceStopBtn.addEventListener('click', () => {
+      if (isRecording) handleToggleMic();
+    });
+  }
+
   async function handleToggleMic() {
     if (!isRecording) {
       // Tell background service worker to start recording via offscreen document
@@ -215,22 +226,82 @@ document.addEventListener('DOMContentLoaded', () => {
       voiceRecordingBar.classList.remove('hidden');
       recordingStartTime = Date.now();
 
+      // Reset live transcript
+      if (liveTranscript) {
+        liveTranscript.textContent = 'Start speaking...';
+        liveTranscript.classList.remove('has-text');
+      }
+
+      // Start live preview using Web Speech API (browser-native, works in Chrome)
+      try {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+          speechRecognition = new SpeechRecognition();
+          speechRecognition.continuous = true;
+          speechRecognition.interimResults = true;
+          speechRecognition.lang = ''; // Empty = auto-detect
+          speechRecognition.maxAlternatives = 1;
+
+          let finalText = '';
+
+          speechRecognition.onresult = (event) => {
+            let interimText = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              const transcript = event.results[i][0].transcript;
+              if (event.results[i].isFinal) {
+                finalText += transcript + ' ';
+              } else {
+                interimText += transcript;
+              }
+            }
+
+            if (liveTranscript) {
+              const display = (finalText + interimText).trim();
+              liveTranscript.textContent = display || 'Listening...';
+              liveTranscript.classList.toggle('has-text', display.length > 0);
+            }
+          };
+
+          speechRecognition.onerror = (e) => {
+            console.warn('Speech preview error:', e.error);
+            if (liveTranscript) liveTranscript.textContent = 'Listening (preview unavailable)...';
+          };
+
+          speechRecognition.start();
+        }
+      } catch (e) {
+        console.warn('Web Speech API not available for preview:', e);
+      }
+
       recordingInterval = setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
         const min = Math.floor(elapsedSec / 60);
         const sec = elapsedSec % 60;
-        recordingTimer.textContent = `Listening & Auto-Detecting... ${min}:${sec < 10 ? '0' : ''}${sec}`;
+        recordingTimer.textContent = `${min}:${sec < 10 ? '0' : ''}${sec}`;
       }, 500);
     } else {
-      // Tell background to stop recording — it will send back the audio
+      // Stop recording
       isRecording = false;
       micBtn.classList.remove('recording');
       voiceRecordingBar.classList.add('hidden');
       clearInterval(recordingInterval);
 
-      reasoningBox.innerHTML = `<em>Transcribing voice (Auto-Detect: Hindi / Kannada / English)...</em>`;
-      updateStatus('thinking', 'Transcribing audio on-device...');
+      // Stop live speech preview
+      if (speechRecognition) {
+        try { speechRecognition.stop(); } catch(e) {}
+        speechRecognition = null;
+      }
 
+      // Show what was captured in reasoning box
+      const capturedText = liveTranscript ? liveTranscript.textContent : '';
+      if (capturedText && capturedText !== 'Start speaking...' && capturedText !== 'Listening...') {
+        reasoningBox.innerHTML = `<strong>Voice:</strong> "${escapeHtml(capturedText)}"<br><em style="color:#6b7280">Transcribing on-device for precision...</em>`;
+        commandInput.value = capturedText;
+      } else {
+        reasoningBox.innerHTML = `<em>Processing recorded audio...</em>`;
+      }
+
+      updateStatus('thinking', 'Transcribing audio on-device...');
       chrome.runtime.sendMessage({ type: 'stop_recording' });
     }
   }
