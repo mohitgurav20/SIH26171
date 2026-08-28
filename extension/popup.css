@@ -206,6 +206,36 @@ body {
   height: 13px;
 }
 
+/* Quick Action Chips */
+.quick-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip-btn {
+  background: var(--white);
+  border: 1px solid var(--border-soft);
+  color: var(--pink-600);
+  border-radius: 20px;
+  padding: 3px 9px;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: all 0.15s ease;
+}
+
+.chip-btn:hover {
+  background: var(--pink-50);
+  border-color: var(--pink-400);
+  transform: translateY(-1px);
+}
+
+.chip-btn:active {
+  transform: translateY(0);
+}
+
 /* =====================================================================
    Large Centerpiece Voice Button
 ===================================================================== */
