@@ -5,7 +5,8 @@
  * Owner: Mohit
  */
 
-const NATIVE_HOST_NAME = 'com.sih26171.browser_ai_agent';
+const NATIVE_HOST_NAMES = ['com.sih26171.voicc', 'com.sih26171.browser_ai_agent'];
+let currentHostIndex = 0;
 
 let nativePort = null;
 let reconnectTimer = null;
@@ -18,8 +19,10 @@ let prefetchAbortController = null;
 function connectNativeHost() {
   if (nativePort) return;
 
+  const hostToTry = NATIVE_HOST_NAMES[currentHostIndex % NATIVE_HOST_NAMES.length];
+
   try {
-    nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+    nativePort = chrome.runtime.connectNative(hostToTry);
 
     nativePort.onMessage.addListener((message) => {
       console.log('[Background] Native host message:', message.type);
@@ -28,17 +31,19 @@ function connectNativeHost() {
 
     nativePort.onDisconnect.addListener(() => {
       const error = chrome.runtime.lastError?.message || 'Unknown error';
-      console.warn('[Background] Native host disconnected:', error);
+      console.warn(`[Background] Native host (${hostToTry}) disconnected:`, error);
       nativePort = null;
+      currentHostIndex++;
       broadcastStatus('offline', 'Native host disconnected. Reconnecting...');
       scheduleReconnect();
     });
 
     broadcastStatus('connected', 'Connected to native agent');
-    console.log('[Background] Connected to native host:', NATIVE_HOST_NAME);
+    console.log('[Background] Connected to native host:', hostToTry);
   } catch (error) {
-    console.error('[Background] Failed to connect to native host:', error);
+    console.error(`[Background] Failed to connect to native host (${hostToTry}):`, error);
     nativePort = null;
+    currentHostIndex++;
     broadcastStatus('offline', 'Failed to connect to host');
     scheduleReconnect();
   }

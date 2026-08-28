@@ -1,0 +1,10 @@
+{
+  "name": "com.sih26171.browser_ai_agent",
+  "description": "SIH26171 on-device browser agent host",
+  "path": "D:\\Browser ai agent\\Browser-AI-agent\\native-host\\install\\voicc_host.bat",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://*/*",
+    "chrome-extension://*/"
+  ]
+}
