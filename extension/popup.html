@@ -8,41 +8,163 @@
 </head>
 <body>
   <div id="app">
-    <header>
-      <h1>🤖 Browser AI Agent</h1>
-      <span id="status-indicator" class="status offline">Offline</span>
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <div class="logo-icon">🚀</div>
+        <div class="brand-text">
+          <h1>Browser AI Agent</h1>
+          <span class="sub-title">ISRO SIH26171 • On-Device Perception</span>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span id="model-badge" class="badge badge-model">Qwen2.5 + Vision</span>
+        <span id="status-indicator" class="status-pill status-offline">
+          <span class="status-dot"></span>
+          <span class="status-label">Offline</span>
+        </span>
+      </div>
     </header>
 
-    <section id="command-section">
-      <div id="input-row">
-        <input type="text" id="command-input" placeholder="Type a command..." autocomplete="off" />
-        <button id="mic-btn" title="Voice input">🎤</button>
-        <button id="send-btn" title="Send command">➤</button>
+    <!-- Command & Voice Input Section -->
+    <section class="card input-card">
+      <div class="input-container">
+        <input 
+          type="text" 
+          id="command-input" 
+          placeholder="What should I do on this page?" 
+          autocomplete="off" 
+          spellcheck="false"
+        />
+        <button id="mic-btn" class="icon-btn mic-btn" title="Hold/Click to Speak">
+          <span class="mic-icon">🎤</span>
+          <span class="rec-dot"></span>
+        </button>
+        <button id="send-btn" class="primary-btn send-btn" title="Send command">
+          <span class="btn-text">Execute</span>
+          <span class="btn-arrow">➤</span>
+        </button>
       </div>
-      <div id="language-selector">
-        <label><input type="radio" name="lang" value="en" checked> EN</label>
-        <label><input type="radio" name="lang" value="hi"> HI</label>
-        <label><input type="radio" name="lang" value="kn"> KN</label>
+
+      <div class="input-toolbar">
+        <div class="lang-selector" id="language-selector">
+          <span class="toolbar-label">Voice:</span>
+          <label class="lang-chip">
+            <input type="radio" name="lang" value="en" checked>
+            <span>EN</span>
+          </label>
+          <label class="lang-chip">
+            <input type="radio" name="lang" value="hi">
+            <span>HI (हिंदी)</span>
+          </label>
+          <label class="lang-chip">
+            <input type="radio" name="lang" value="kn">
+            <span>KN (ಕನ್ನಡ)</span>
+          </label>
+          <label class="lang-chip">
+            <input type="radio" name="lang" value="auto">
+            <span>Auto</span>
+          </label>
+        </div>
+
+        <div class="tool-actions">
+          <button id="toggle-tags-btn" class="mini-action-btn" title="Toggle Set-of-Marks numbered badges on page">
+            🏷️ Tags
+          </button>
+        </div>
+      </div>
+      <div id="voice-recording-bar" class="recording-bar hidden">
+        <span class="pulse-wave"></span>
+        <span id="recording-timer">Recording 16kHz audio... 0:00</span>
       </div>
     </section>
 
-    <section id="reasoning-trail">
-      <h2>Reasoning Trail</h2>
-      <div id="trail-content">
-        <p class="placeholder">Send a command to see the reasoning trail...</p>
+    <!-- Active Plan & Reasoning Section -->
+    <section class="card trail-card" id="plan-section">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="title-icon">⚡</span>
+          <h2>Plan & Reasoning Trail</h2>
+        </div>
+        <div class="plan-meta" id="plan-meta" style="display: none;">
+          <span id="confidence-badge" class="badge badge-confidence">95% Conf</span>
+          <span id="source-badge" class="badge badge-source">DOM</span>
+        </div>
+      </div>
+
+      <div id="reasoning-box" class="reasoning-box">
+        <p class="placeholder-text">Enter a command above or use voice input to initiate automated browser tasks.</p>
+      </div>
+
+      <!-- Action Plan Step List -->
+      <div id="plan-steps-container" class="plan-steps-container" style="display: none;">
+        <h3 class="steps-title">Execution Steps</h3>
+        <div id="plan-steps-list" class="plan-steps-list"></div>
       </div>
     </section>
 
-    <section id="evidence-panel">
-      <h2>Evidence</h2>
-      <div id="evidence-content">
-        <p class="placeholder">Action evidence will appear here...</p>
+    <!-- Proof-of-Perception Evidence Panel -->
+    <section class="card evidence-card" id="evidence-section">
+      <div class="card-header">
+        <div class="card-title">
+          <span class="title-icon">🛡️</span>
+          <h2>Proof of Perception Evidence</h2>
+        </div>
+        <span class="badge badge-audit">Hash-Chain Audited</span>
+      </div>
+
+      <div id="evidence-container" class="evidence-container">
+        <p class="placeholder-text">Grounding evidence, visual crops, and reasoning justification will appear as actions execute.</p>
       </div>
     </section>
 
-    <footer>
-      <button id="verify-log-btn" title="Verify hash-chain log">🔗 Verify Log</button>
-      <span id="resource-stats">RAM: -- | Latency: --</span>
+    <!-- Confirmation Modal Dialog (Guardrail Pause) -->
+    <div id="confirmation-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <span class="modal-warn-icon">⚠️</span>
+          <h3>Action Confirmation Required</h3>
+        </div>
+        <p class="modal-message" id="modal-message">
+          The agent detected a potentially sensitive or low-confidence action. Please verify before proceeding.
+        </p>
+        <div class="modal-details" id="modal-details">
+          <!-- Dynamic details -->
+        </div>
+        <div class="modal-actions">
+          <button id="modal-reject-btn" class="modal-btn btn-secondary">Abort</button>
+          <button id="modal-confirm-btn" class="modal-btn btn-primary-danger">Approve Action</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Image Zoom Modal -->
+    <div id="image-zoom-modal" class="modal-overlay hidden">
+      <div class="modal-card zoom-card">
+        <div class="modal-header">
+          <h3>Vision Patch Crop</h3>
+          <button id="close-zoom-btn" class="close-btn">✕</button>
+        </div>
+        <div class="zoom-image-wrapper">
+          <img id="zoomed-image" src="" alt="Proof of Perception Crop" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer Stats & Verification -->
+    <footer class="footer">
+      <div class="footer-left">
+        <button id="verify-log-btn" class="verify-btn" title="Verify SHA-256 Hash Chain Integrity">
+          <span class="icon">🔗</span>
+          <span>Verify Audit Log</span>
+        </button>
+        <span id="audit-status-pill" class="audit-pill hidden">Verified ✓</span>
+      </div>
+      <div class="footer-right" id="resource-stats">
+        <span class="stat-item" id="ram-stat">RAM: -- MB</span>
+        <span class="stat-divider">•</span>
+        <span class="stat-item" id="latency-stat">Latency: -- ms</span>
+      </div>
     </footer>
   </div>
 

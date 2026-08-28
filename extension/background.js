@@ -1,45 +1,124 @@
 /**
  * SIH26171 — Background Service Worker
- * Relays messages between popup/content script and native host.
+ * Coordinates native messaging, screenshot capture, DOM extraction, offscreen processing, and UI sync.
  * Owner: Mohit
  */
 
 const NATIVE_HOST_NAME = 'com.sih26171.browser_ai_agent';
 
 let nativePort = null;
+let reconnectTimer = null;
+let currentStatus = { state: 'offline', message: '' };
+let latestResourceStats = null;
 
-// Connect to native host
+// Connect to native messaging host
 function connectNativeHost() {
+  if (nativePort) return;
+
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST_NAME);
 
     nativePort.onMessage.addListener((message) => {
-      console.log('[Background] Received from native host:', message.type);
+      console.log('[Background] Native host message:', message.type);
       handleNativeMessage(message);
     });
 
     nativePort.onDisconnect.addListener(() => {
-      console.log('[Background] Native host disconnected:', chrome.runtime.lastError?.message);
+      const error = chrome.runtime.lastError?.message || 'Unknown error';
+      console.warn('[Background] Native host disconnected:', error);
       nativePort = null;
-      broadcastStatus('offline');
+      broadcastStatus('offline', 'Native host disconnected. Reconnecting...');
+      scheduleReconnect();
     });
 
-    broadcastStatus('connected');
-    console.log('[Background] Connected to native host');
+    broadcastStatus('connected', 'Connected to native agent');
+    console.log('[Background] Connected to native host:', NATIVE_HOST_NAME);
   } catch (error) {
     console.error('[Background] Failed to connect to native host:', error);
-    broadcastStatus('offline');
+    nativePort = null;
+    broadcastStatus('offline', 'Failed to connect to host');
+    scheduleReconnect();
   }
 }
 
-// Handle messages from popup and content scripts
+function scheduleReconnect() {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectNativeHost();
+  }, 4000);
+}
+
+// Forward outgoing message to native host
+function forwardToNativeHost(message) {
+  if (!nativePort) {
+    console.warn('[Background] Port not connected, attempting reconnect...');
+    connectNativeHost();
+  }
+
+  if (nativePort) {
+    try {
+      nativePort.postMessage(message);
+      return true;
+    } catch (err) {
+      console.error('[Background] Error posting message to native host:', err);
+      return false;
+    }
+  } else {
+    console.error('[Background] Cannot send — native host unavailable');
+    return false;
+  }
+}
+
+// Ensure offscreen document exists
+async function ensureOffscreenDocument() {
+  if (await chrome.offscreen.hasDocument()) return;
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['DOM_SCRAPING', 'USER_MEDIA', 'AUDIO_PLAYBACK'],
+    justification: 'Crop visual patches and process microphone audio PCM stream'
+  });
+}
+
+// Capture current tab screenshot as Base64 PNG
+async function captureActiveTabScreenshot() {
+  try {
+    const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    return {
+      image_base64: base64,
+      width: 1920,
+      height: 1080
+    };
+  } catch (err) {
+    console.warn('[Background] Screenshot capture failed:', err);
+    return null;
+  }
+}
+
+// Handle messages from Extension components (popup, content, offscreen)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[Background] Received message:', message.type);
+  // Ignore messages intended for offscreen document
+  if (message.target === 'offscreen') return false;
+
+  console.log('[Background] Received runtime message:', message.type);
 
   switch (message.type) {
+    case 'get_initial_state':
+      sendResponse({
+        status: currentStatus,
+        resource_stats: latestResourceStats
+      });
+      break;
+
     case 'command':
+      handleUserCommand(message.payload);
+      sendResponse({ status: 'processing' });
+      break;
+
+    case 'audio':
       forwardToNativeHost(message);
-      broadcastStatus('thinking');
+      broadcastStatus('thinking', 'Transcribing audio...');
       sendResponse({ status: 'sent' });
       break;
 
@@ -53,92 +132,188 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ status: 'sent' });
       break;
 
-    case 'audio':
-      forwardToNativeHost(message);
-      sendResponse({ status: 'sent' });
-      break;
-
     case 'action_result':
       forwardToNativeHost(message);
       sendResponse({ status: 'sent' });
       break;
 
     case 'verify_log':
-      forwardToNativeHost({ type: 'verify_log', payload: {} });
+      forwardToNativeHost({
+        type: 'verify_log',
+        id: `vl-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        payload: {}
+      });
       sendResponse({ status: 'sent' });
       break;
 
+    case 'confirm_action':
+      forwardToNativeHost({
+        type: 'confirmation_response',
+        id: `conf-resp-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        payload: message.payload
+      });
+      broadcastStatus('acting', 'Executing confirmed action...');
+      sendResponse({ status: 'sent' });
+      break;
+
+    case 'crop_patch':
+      ensureOffscreenDocument().then(() => {
+        chrome.runtime.sendMessage({
+          target: 'offscreen',
+          type: 'crop_image',
+          payload: message.payload
+        }, (res) => sendResponse(res));
+      });
+      return true;
+
+    case 'toggle_overlays':
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: message.show ? 'show_overlays' : 'hide_overlays'
+          }, (res) => sendResponse(res));
+        }
+      });
+      return true;
+
     default:
-      sendResponse({ status: 'unknown_type' });
+      sendResponse({ status: 'unrecognized_type' });
   }
 
-  return true; // Keep channel open for async response
+  return true;
 });
 
-// Forward message to native host
-function forwardToNativeHost(message) {
-  if (!nativePort) {
-    console.warn('[Background] Native host not connected, attempting reconnect...');
-    connectNativeHost();
-  }
+// Full pipeline when a user issues a command
+async function handleUserCommand(commandPayload) {
+  broadcastStatus('thinking', 'Extracting page DOM & capturing context...');
 
-  if (nativePort) {
-    nativePort.postMessage(message);
-  } else {
-    console.error('[Background] Cannot send — native host unavailable');
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || !tabs[0]) {
+      throw new Error('No active browser tab found');
+    }
+
+    const activeTab = tabs[0];
+
+    // 1. Request DOM extraction from Content Script
+    let domData = null;
+    try {
+      const response = await chrome.tabs.sendMessage(activeTab.id, {
+        type: 'extract_dom',
+        render_overlays: false
+      });
+      if (response && response.payload) {
+        domData = response.payload;
+      }
+    } catch (err) {
+      console.warn('[Background] Could not extract DOM via content script:', err);
+    }
+
+    // 2. Capture Screenshot
+    const screenshot = await captureActiveTabScreenshot();
+
+    // 3. Send DOM Data to host
+    if (domData) {
+      forwardToNativeHost({
+        type: 'dom_data',
+        id: `dom-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        payload: domData
+      });
+    }
+
+    // 4. Send Screenshot to host
+    if (screenshot) {
+      forwardToNativeHost({
+        type: 'screenshot',
+        id: `ss-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        payload: {
+          ...screenshot,
+          url: activeTab.url || ''
+        }
+      });
+    }
+
+    // 5. Send Command to host
+    forwardToNativeHost({
+      type: 'command',
+      id: `cmd-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      payload: commandPayload
+    });
+
+    broadcastStatus('thinking', 'Agent analyzing page and planning actions...');
+  } catch (error) {
+    console.error('[Background] Error processing command pipeline:', error);
+    broadcastStatus('error', error.message);
   }
 }
 
-// Handle messages from native host
+// Handle incoming messages from Python Native Host
 function handleNativeMessage(message) {
   switch (message.type) {
     case 'action_plan':
       // Forward plan to content script for execution
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
-          chrome.tabs.sendMessage(tabs[0].id, message);
+          chrome.tabs.sendMessage(tabs[0].id, message).catch((err) => {
+            console.warn('[Background] Failed to send action_plan to tab:', err);
+          });
         }
       });
-      // Also forward to popup for display
-      chrome.runtime.sendMessage(message);
-      broadcastStatus('acting');
+      // Forward to popup for UI visualization
+      chrome.runtime.sendMessage(message).catch(() => {});
+      broadcastStatus('acting', 'Executing planned actions...');
       break;
 
     case 'transcription':
-      chrome.runtime.sendMessage(message);
+      chrome.runtime.sendMessage(message).catch(() => {});
+      broadcastStatus('thinking', `Recognized: "${message.payload?.text || ''}"`);
       break;
 
     case 'status':
-      broadcastStatus(message.payload.state);
-      chrome.runtime.sendMessage(message);
+      currentStatus = message.payload;
+      broadcastStatus(message.payload.state, message.payload.message);
+      chrome.runtime.sendMessage(message).catch(() => {});
       break;
 
     case 'confirmation_request':
-      chrome.runtime.sendMessage(message);
-      broadcastStatus('paused');
+      broadcastStatus('paused', 'Confirmation required for sensitive action');
+      chrome.runtime.sendMessage(message).catch(() => {});
       break;
 
     case 'evidence':
-      chrome.runtime.sendMessage(message);
+      chrome.runtime.sendMessage(message).catch(() => {});
       break;
 
     case 'resource_stats':
-      chrome.runtime.sendMessage(message);
+      latestResourceStats = message.payload;
+      chrome.runtime.sendMessage(message).catch(() => {});
+      break;
+
+    case 'verification_result':
+      chrome.runtime.sendMessage(message).catch(() => {});
       break;
 
     default:
-      console.log('[Background] Unknown native message type:', message.type);
+      console.log('[Background] Unhandled native message type:', message.type);
+      chrome.runtime.sendMessage(message).catch(() => {});
   }
 }
 
-function broadcastStatus(state) {
+// Broadcast status to popup
+function broadcastStatus(state, message = '') {
+  currentStatus = { state, message };
   chrome.runtime.sendMessage({
     type: 'status',
-    payload: { state, message: '' }
-  }).catch(() => {}); // Popup might not be open
+    payload: currentStatus
+  }).catch(() => {});
 }
 
-// Auto-connect on startup
+// Initial connection
 connectNativeHost();
 
-console.log('[SIH26171] Background service worker loaded');
+console.log('[SIH26171] Background Service Worker initialized');
