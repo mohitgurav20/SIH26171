@@ -90,6 +90,65 @@ async function cropImagePatch(payload) {
   });
 }
 
+let offscreenSpeechRec = null;
+
+function startOffscreenSpeechRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return;
+
+  try {
+    if (offscreenSpeechRec) {
+      try { offscreenSpeechRec.stop(); } catch(e) {}
+    }
+
+    offscreenSpeechRec = new SpeechRecognition();
+    offscreenSpeechRec.continuous = true;
+    offscreenSpeechRec.interimResults = true;
+    offscreenSpeechRec.lang = navigator.language || 'en-IN';
+
+    offscreenSpeechRec.onresult = (event) => {
+      let interimText = '';
+      let finalText = '';
+      for (let i = 0; i < event.results.length; i++) {
+        const res = event.results[i];
+        if (res.isFinal) {
+          finalText += res[0].transcript + ' ';
+        } else {
+          interimText += res[0].transcript;
+        }
+      }
+      const fullTranscript = (finalText + interimText).trim();
+      if (fullTranscript) {
+        chrome.runtime.sendMessage({
+          type: 'speech_live_transcript',
+          text: fullTranscript
+        }).catch(() => {});
+      }
+    };
+
+    offscreenSpeechRec.onerror = (event) => {
+      console.warn('[Offscreen] Speech recognition event error:', event.error);
+    };
+
+    offscreenSpeechRec.onend = () => {
+      if (audioStream && offscreenSpeechRec) {
+        try { offscreenSpeechRec.start(); } catch(e) {}
+      }
+    };
+
+    offscreenSpeechRec.start();
+  } catch (err) {
+    console.warn('[Offscreen] Failed to start SpeechRecognition:', err);
+  }
+}
+
+function stopOffscreenSpeechRecognition() {
+  if (offscreenSpeechRec) {
+    try { offscreenSpeechRec.stop(); } catch(e) {}
+    offscreenSpeechRec = null;
+  }
+}
+
 /**
  * Start capturing microphone stream and downsample to 16kHz PCM
  */
@@ -132,12 +191,17 @@ async function startAudioRecording() {
 
   mediaStreamSource.connect(audioProcessor);
   audioProcessor.connect(audioContext.destination);
+
+  // Also start speech recognition in offscreen context
+  startOffscreenSpeechRecognition();
 }
 
 /**
  * Stop capturing audio, encode PCM to 16kHz Mono 16-bit WAV, and return Base64
  */
 async function stopAudioRecording() {
+  stopOffscreenSpeechRecognition();
+
   if (audioProcessor && mediaStreamSource) {
     mediaStreamSource.disconnect();
     audioProcessor.disconnect();
