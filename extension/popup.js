@@ -313,7 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
     planStepsContainer.style.display = 'none';
     planMeta.style.display = 'none';
 
-    reasoningBox.innerHTML = `<strong>Planning:</strong> Analyzing page DOM elements for "${escapeHtml(text)}"...`;
+    reasoningBox.innerHTML = `<strong>Planning:</strong> Analyzing active page DOM elements for "${escapeHtml(text)}"...`;
     updateStatus('thinking', 'Planning actions for command...');
 
     chrome.runtime.sendMessage({
@@ -324,26 +324,6 @@ document.addEventListener('DOMContentLoaded', () => {
         language: 'auto'
       }
     });
-
-    // Provide instant responsive feedback in UI
-    setTimeout(() => {
-      if (!planStepsList.children.length) {
-        renderActionPlan({
-          confidence: 0.98,
-          source: 'DOM-Perception',
-          reasoning: `Identified target elements on active page for "${escapeHtml(text)}". Executing action sequence.`,
-          actions: [
-            { step: 0, tag_id: 1, action: 'FOCUS', description: `Focus interactive element` },
-            { step: 1, tag_id: 2, action: 'CLICK', description: `Execute target action` }
-          ]
-        });
-        setTimeout(() => updateStepResult({ step_index: 0, success: true }), 350);
-        setTimeout(() => {
-          updateStepResult({ step_index: 1, success: true });
-          updateStatus('online', 'Action Complete');
-        }, 750);
-      }
-    }, 400);
   }
 
   // Render Action Plan
