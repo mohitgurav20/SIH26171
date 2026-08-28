@@ -177,8 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function handleSendCommand() {
     const text = commandInput.value.trim();
     if (!text) return;
-
-    const lang = document.querySelector('input[name="lang"]:checked')?.value || 'en';
+    const lang = 'auto'; // Automatic speech language recognition (Hindi / Kannada / English)
 
     // Clear previous execution state
     planStepsList.innerHTML = '';
@@ -271,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Encode to 16kHz WAV
     const wavBuffer = encodeWAV(mergedPCM, 16000);
     const audioBase64 = bufferToBase64(wavBuffer);
-    const lang = document.querySelector('input[name="lang"]:checked')?.value || 'auto';
+    const lang = 'auto'; // Automatic Speech Recognition detects Hindi, Kannada, or English automatically
 
     reasoningBox.innerHTML = `<em>Transcribing voice audio (${(totalLen / 16000).toFixed(1)}s)...</em>`;
     updateStatus('thinking', 'Transcribing audio on-device...');
