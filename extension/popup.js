@@ -239,8 +239,16 @@ document.addEventListener('DOMContentLoaded', () => {
           speechRecognition = new SpeechRecognition();
           speechRecognition.continuous = true;
           speechRecognition.interimResults = true;
-          speechRecognition.lang = ''; // Empty = auto-detect
+          // Use navigator language or default to en-IN (works well for English + Hindi mixed speech)
+          speechRecognition.lang = navigator.language || 'en-IN';
           speechRecognition.maxAlternatives = 1;
+
+          // Auto-restart if recognition stops prematurely while still recording
+          speechRecognition.onend = () => {
+            if (isRecording && speechRecognition) {
+              try { speechRecognition.start(); } catch(e) {}
+            }
+          };
 
           let finalText = '';
 
