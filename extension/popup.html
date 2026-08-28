@@ -3,170 +3,149 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AERO·AGENT</title>
+  <title>Aero Agent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div id="app" class="app-shell">
+  <div class="app-container">
 
-    <!-- Header -->
-    <header class="topbar">
-      <div class="topbar-left">
-        <div class="app-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"/>
-            <circle cx="12" cy="12" r="4"/>
-            <line x1="12" y1="2" x2="12" y2="5"/>
-            <line x1="12" y1="19" x2="12" y2="22"/>
-            <line x1="2" y1="12" x2="5" y2="12"/>
-            <line x1="19" y1="12" x2="22" y2="12"/>
+            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>
+            <path d="M2 12h20"/>
           </svg>
         </div>
         <div>
-          <div class="app-name">Aero Agent</div>
-          <div class="app-desc">On-Device Browser Intelligence</div>
+          <h1 class="brand-title">Aero Agent</h1>
+          <p class="brand-subtitle">AI Browser Companion</p>
         </div>
       </div>
-      <div id="status-indicator" class="chip chip-online">
-        <span class="chip-dot"></span>
-        <span class="status-label">On-Device</span>
+      <div id="status-indicator" class="status-pill">
+        <span class="status-dot"></span>
+        <span class="status-label">Ready</span>
       </div>
     </header>
 
-    <!-- Main Content -->
-    <main class="content">
-
-      <!-- Command Input -->
-      <div class="input-row">
+    <!-- Text Input Box -->
+    <section class="input-card">
+      <div class="input-wrapper">
         <input
           type="text"
           id="command-input"
-          class="cmd-input"
-          placeholder="What should I do on this page?"
+          class="text-input"
+          placeholder="Ask me to do anything on this page..."
           autocomplete="off"
           spellcheck="false"
         />
-        <button id="mic-btn" class="btn-icon mic-btn" title="Speak in any language — auto-detects Hindi, Kannada, English">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-            <line x1="12" y1="19" x2="12" y2="22"/>
-          </svg>
-        </button>
-        <button id="send-btn" class="btn-primary" title="Run">
-          Run
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px">
-            <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+        <button id="send-btn" class="send-btn" title="Execute Command">
+          <span>Run</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
           </svg>
         </button>
       </div>
+    </section>
 
-      <!-- Live Voice Transcription Preview -->
-      <div id="voice-recording-bar" class="voice-bar hidden">
-        <div class="voice-bar-top">
-          <div class="voice-waves"><span></span><span></span><span></span><span></span><span></span></div>
-          <span id="recording-timer" class="voice-timer">0:00</span>
-          <button id="voice-stop-btn" class="btn-stop">Stop</button>
-        </div>
-        <div class="live-transcript-box">
-          <span class="live-label">Listening:</span>
-          <span id="live-transcript" class="live-text">Start speaking...</span>
-        </div>
-      </div>
-
-      <!-- Quick Actions Row -->
-      <div class="actions-row">
-        <button id="toggle-tags-btn" class="btn-ghost" title="Show element badges on page">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px">
-            <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-            <line x1="7" y1="7" x2="7.01" y2="7"/>
-          </svg>
-          Show Badges
-        </button>
-        <span class="auto-lang-hint">Auto-detects Hindi · Kannada · English</span>
-      </div>
-
-      <!-- Reasoning & Plan Section -->
-      <section class="card" id="plan-section">
-        <div class="card-top">
-          <h2 class="card-title">Reasoning</h2>
-          <div class="badges-row" id="plan-meta" style="display:none">
-            <span id="cache-badge" class="badge badge-amber" style="display:none">Cached</span>
-            <span id="confidence-badge" class="badge badge-green">98%</span>
-            <span id="source-badge" class="badge badge-blue">Draft</span>
+    <!-- Large Voice Action Section -->
+    <section class="voice-centerpiece">
+      <div class="mic-button-wrapper">
+        <button id="mic-btn" class="large-mic-btn" title="Click to Speak">
+          <div class="mic-pulse-ring"></div>
+          <div class="mic-pulse-ring ring-2"></div>
+          <div class="mic-icon-inner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
           </div>
-        </div>
-        <div id="reasoning-box" class="reasoning-body">
-          <p class="placeholder">Enter a command or speak to start.</p>
-        </div>
+        </button>
+      </div>
+      <div class="mic-hint-text">
+        <span id="mic-status-label">Tap to speak in English, Hindi, or Kannada</span>
+      </div>
+    </section>
 
-        <div id="plan-steps-container" class="steps-block" style="display:none">
-          <div class="steps-top">
-            <span class="steps-label">Action Sequence</span>
-            <span class="steps-speed">0 model calls between steps</span>
-          </div>
-          <div id="plan-steps-list" class="steps-list"></div>
+    <!-- Live Speech Transcription Box -->
+    <section id="voice-recording-bar" class="live-transcript-card hidden">
+      <div class="transcript-header">
+        <div class="wave-visualizer">
+          <span></span><span></span><span></span><span></span><span></span>
         </div>
-      </section>
+        <span class="transcript-badge">Live Voice</span>
+        <span id="recording-timer" class="recording-timer">0:00</span>
+        <button id="voice-stop-btn" class="stop-pill-btn">Done</button>
+      </div>
+      <div class="transcript-body">
+        <p id="live-transcript" class="transcript-text">Listening to your voice...</p>
+      </div>
+    </section>
 
-      <!-- Evidence Section -->
-      <section class="card" id="evidence-section">
-        <div class="card-top">
-          <h2 class="card-title">Perception Evidence</h2>
-          <span class="badge badge-blue">SHA-256</span>
+    <!-- Agent Activity & Action Description Card -->
+    <section class="action-card">
+      <div class="card-header">
+        <div class="card-title-group">
+          <span class="card-icon">⚡</span>
+          <h2 class="card-title">Agent Actions</h2>
         </div>
-        <div id="evidence-container" class="evidence-body">
-          <p class="placeholder">Visual evidence and audit proofs appear here as actions execute.</p>
+        <div id="plan-meta" class="meta-tags" style="display: none;">
+          <span id="confidence-badge" class="tag tag-pink">98% Match</span>
+          <span id="source-badge" class="tag tag-gray">On-Device</span>
         </div>
-      </section>
-    </main>
+      </div>
+
+      <div id="reasoning-box" class="reasoning-container">
+        <p class="empty-state">Type a command or tap the microphone to start.</p>
+      </div>
+
+      <!-- Live Step Progress List -->
+      <div id="plan-steps-container" class="steps-container" style="display: none;">
+        <div class="steps-heading">
+          <span>Executing Steps</span>
+          <span class="steps-badge">Sub-200ms</span>
+        </div>
+        <div id="plan-steps-list" class="steps-list"></div>
+      </div>
+    </section>
+
+    <!-- Action Tools Bar -->
+    <div class="utility-row">
+      <button id="toggle-tags-btn" class="util-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+          <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+          <line x1="7" y1="7" x2="7.01" y2="7"/>
+        </svg>
+        Highlight Page Elements
+      </button>
+      <button id="verify-log-btn" class="util-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        Audit Log
+      </button>
+    </div>
 
     <!-- Confirmation Modal -->
-    <div id="confirmation-modal" class="modal-overlay hidden">
-      <div class="modal-box">
-        <div class="modal-flag">⚠️ Safety Check</div>
-        <h3 class="modal-heading">Confirm this action?</h3>
-        <p class="modal-body" id="modal-message">The agent wants to perform a sensitive action.</p>
-        <div class="modal-inspect" id="modal-details"></div>
-        <div class="modal-btns">
-          <button id="modal-reject-btn" class="btn-ghost">Cancel</button>
-          <button id="modal-confirm-btn" class="btn-danger">Approve</button>
+    <div id="confirmation-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <div class="modal-badge">⚠️ Safety Confirmation</div>
+        <h3 class="modal-title">Confirm Action</h3>
+        <p id="modal-message" class="modal-desc">The agent is asking to perform a sensitive action.</p>
+        <div id="modal-details" class="modal-details-box"></div>
+        <div class="modal-actions">
+          <button id="modal-reject-btn" class="btn-cancel">Cancel</button>
+          <button id="modal-confirm-btn" class="btn-confirm">Approve</button>
         </div>
       </div>
     </div>
-
-    <!-- Zoom Modal -->
-    <div id="image-zoom-modal" class="modal-overlay hidden">
-      <div class="modal-box">
-        <div style="display:flex;justify-content:space-between;align-items:center">
-          <span style="font-weight:600">Perception Crop</span>
-          <button id="close-zoom-btn" class="btn-ghost" style="padding:2px 8px">✕</button>
-        </div>
-        <div class="zoom-wrap">
-          <img id="zoomed-image" src="" alt="Crop" />
-        </div>
-      </div>
-    </div>
-
-    <!-- Footer -->
-    <footer class="bottombar">
-      <button id="verify-log-btn" class="btn-ghost verify-btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-        </svg>
-        Verify Hash Chain
-      </button>
-      <span id="audit-status-pill" class="badge badge-green hidden">Valid ✓</span>
-      <div class="telemetry" id="resource-stats">
-        <span id="ram-stat" class="t-item">RAM: 42 MB</span>
-        <span class="t-sep">·</span>
-        <span id="latency-stat" class="t-item">14 ms</span>
-      </div>
-    </footer>
 
   </div>
   <script src="popup.js"></script>

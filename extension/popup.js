@@ -338,6 +338,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  const micStatusLabel = document.getElementById('mic-status-label');
+
   async function handleToggleMic() {
     if (!isRecording) {
       // Check if one-time permission has been granted
@@ -351,6 +353,7 @@ document.addEventListener('DOMContentLoaded', () => {
       isRecording = true;
       micBtn.classList.add('recording');
       voiceRecordingBar.classList.remove('hidden');
+      if (micStatusLabel) micStatusLabel.textContent = '🔴 Listening... Tap to finish';
       recordingStartTime = Date.now();
 
       // Reset live transcript
@@ -381,6 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
       isRecording = false;
       micBtn.classList.remove('recording');
       voiceRecordingBar.classList.add('hidden');
+      if (micStatusLabel) micStatusLabel.textContent = 'Tap to speak in English, Hindi, or Kannada';
       clearInterval(recordingInterval);
 
       // Stop speech and visualizer
