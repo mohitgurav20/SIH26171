@@ -1,3 +1,4 @@
+
 from enum import Enum
 
 class MemoryCollectionName(str, Enum):

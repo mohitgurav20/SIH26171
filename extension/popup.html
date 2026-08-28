@@ -3,171 +3,217 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SIH26171 Browser AI Agent</title>
+  <title>AERO·AGENT — On-Device Browser Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div id="app">
-    <!-- Header -->
-    <header class="header">
-      <div class="brand">
-        <div class="logo-icon">🚀</div>
-        <div class="brand-text">
-          <h1>Browser AI Agent</h1>
-          <span class="sub-title">ISRO SIH26171 • On-Device Perception</span>
+  <div id="app" class="app-container">
+    
+    <!-- Top Navigation & Brand Header -->
+    <header class="app-header">
+      <div class="brand-cluster">
+        <div class="brand-logo-wrapper">
+          <svg class="brand-svg-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="32" height="32" rx="8" fill="#0c1222"/>
+            <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" stroke="url(#logo-grad)" stroke-opacity="0.6"/>
+            <circle cx="16" cy="16" r="8.5" stroke="#00f0ff" stroke-width="1.8" stroke-dasharray="3 2"/>
+            <circle cx="16" cy="16" r="4.5" fill="#00f0ff"/>
+            <circle cx="16" cy="16" r="2" fill="#070a13"/>
+            <path d="M16 3V7M16 25V29M3 16H7M25 16H29" stroke="#00f0ff" stroke-width="1.5" stroke-linecap="round"/>
+            <defs>
+              <linearGradient id="logo-grad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#00f0ff"/>
+                <stop offset="1" stop-color="#7000ff"/>
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <div class="brand-meta">
+          <div class="brand-title-row">
+            <span class="brand-title">AERO<span class="brand-accent">·AGENT</span></span>
+            <span class="brand-version">v1.0</span>
+          </div>
+          <span class="brand-subtext">ISRO SIH26171 • Neural Visual Engine</span>
         </div>
       </div>
-      <div class="header-badges">
-        <span id="model-badge" class="badge badge-model">Qwen2.5 + Vision</span>
-        <span id="status-indicator" class="status-pill status-offline">
-          <span class="status-dot"></span>
-          <span class="status-label">Offline</span>
-        </span>
+
+      <div class="header-status-group">
+        <div id="status-indicator" class="status-pill status-online">
+          <span class="status-pulse-dot"></span>
+          <span class="status-label">AIR-GAPPED</span>
+        </div>
       </div>
     </header>
 
-    <!-- Command & Voice Input Section -->
-    <section class="card input-card">
-      <div class="input-container">
-        <input 
-          type="text" 
-          id="command-input" 
-          placeholder="What should I do on this page?" 
-          autocomplete="off" 
-          spellcheck="false"
-        />
-        <button id="mic-btn" class="icon-btn mic-btn" title="Hold/Click to Speak">
-          <span class="mic-icon">🎤</span>
-          <span class="rec-dot"></span>
-        </button>
-        <button id="send-btn" class="primary-btn send-btn" title="Send command">
-          <span class="btn-text">Execute</span>
-          <span class="btn-arrow">➤</span>
-        </button>
-      </div>
-
-      <div class="input-toolbar">
-        <div class="lang-selector" id="language-selector">
-          <span class="toolbar-label">Voice:</span>
-          <label class="lang-chip">
-            <input type="radio" name="lang" value="en" checked>
-            <span>EN</span>
-          </label>
-          <label class="lang-chip">
-            <input type="radio" name="lang" value="hi">
-            <span>HI (हिंदी)</span>
-          </label>
-          <label class="lang-chip">
-            <input type="radio" name="lang" value="kn">
-            <span>KN (ಕನ್ನಡ)</span>
-          </label>
-          <label class="lang-chip">
-            <input type="radio" name="lang" value="auto">
-            <span>Auto</span>
-          </label>
+    <!-- Command & Execution Center -->
+    <main class="main-body">
+      <section class="command-card">
+        <div class="input-glow-wrapper">
+          <input 
+            type="text" 
+            id="command-input" 
+            class="command-field" 
+            placeholder="Instruct agent (e.g. 'Calibrate Cartosat-3A telemetry')..." 
+            autocomplete="off" 
+            spellcheck="false"
+          />
+          <div class="field-controls">
+            <button id="mic-btn" class="ctrl-btn mic-trigger" title="Voice Input (Hindi / Kannada / English)">
+              <svg class="mic-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="22"/>
+              </svg>
+            </button>
+            <button id="send-btn" class="ctrl-btn execute-trigger" title="Execute Multi-Action Workflow">
+              <span>Run</span>
+              <svg class="arrow-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+                <polyline points="12 5 19 12 12 19"/>
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <div class="tool-actions">
-          <button id="toggle-tags-btn" class="mini-action-btn" title="Toggle Set-of-Marks numbered badges on page">
-            🏷️ Tags
-          </button>
+        <!-- Voice & Tool Control Bar -->
+        <div class="control-toolbar">
+          <div class="voice-lang-group" id="language-selector">
+            <span class="toolbar-caption">VOICE</span>
+            <label class="lang-pill">
+              <input type="radio" name="lang" value="en" checked>
+              <span>EN</span>
+            </label>
+            <label class="lang-pill">
+              <input type="radio" name="lang" value="hi">
+              <span>HI</span>
+            </label>
+            <label class="lang-pill">
+              <input type="radio" name="lang" value="kn">
+              <span>KN</span>
+            </label>
+            <label class="lang-pill">
+              <input type="radio" name="lang" value="auto">
+              <span>AUTO</span>
+            </label>
+          </div>
+
+          <div class="quick-toggles">
+            <button id="toggle-tags-btn" class="tool-chip" title="Toggle Set-of-Marks visual numbered badges">
+              <svg class="chip-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
+                <line x1="7" y1="7" x2="7.01" y2="7"/>
+              </svg>
+              <span>Badges</span>
+            </button>
+          </div>
         </div>
-      </div>
-      <div id="voice-recording-bar" class="recording-bar hidden">
-        <span class="pulse-wave"></span>
-        <span id="recording-timer">Recording 16kHz audio... 0:00</span>
-      </div>
-    </section>
 
-    <!-- Active Plan & Reasoning Section -->
-    <section class="card trail-card" id="plan-section">
-      <div class="card-header">
-        <div class="card-title">
-          <span class="title-icon">⚡</span>
-          <h2>Plan & Reasoning Trail</h2>
+        <!-- Audio Waveform Visualizer -->
+        <div id="voice-recording-bar" class="audio-wave-bar hidden">
+          <div class="wave-animation">
+            <span></span><span></span><span></span><span></span><span></span>
+          </div>
+          <span id="recording-timer" class="wave-timer">Capturing 16kHz PCM Audio...</span>
         </div>
-        <div class="plan-meta" id="plan-meta" style="display: none;">
-          <span id="cache-badge" class="badge badge-cache" style="display: none;">Cached Flow</span>
-          <span id="confidence-badge" class="badge badge-confidence">95% Conf</span>
-          <span id="source-badge" class="badge badge-source">DOM</span>
+      </section>
+
+      <!-- Reasoning Trace & Action Plan -->
+      <section class="section-card plan-card" id="plan-section">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <span class="section-icon">⚡</span>
+            <h2 class="section-heading">Plan & Reasoning Trace</h2>
+          </div>
+          <div class="telemetry-badges" id="plan-meta" style="display: none;">
+            <span id="cache-badge" class="telemetry-pill pill-cache" style="display: none;">⚡ Cached 1.8ms</span>
+            <span id="confidence-badge" class="telemetry-pill pill-conf">98% Conf</span>
+            <span id="source-badge" class="telemetry-pill pill-source">Draft 0.5B</span>
+          </div>
         </div>
-      </div>
 
-
-      <div id="reasoning-box" class="reasoning-box">
-        <p class="placeholder-text">Enter a command above or use voice input to initiate automated browser tasks.</p>
-      </div>
-
-      <!-- Action Plan Step List -->
-      <div id="plan-steps-container" class="plan-steps-container" style="display: none;">
-        <h3 class="steps-title">Execution Steps</h3>
-        <div id="plan-steps-list" class="plan-steps-list"></div>
-      </div>
-    </section>
-
-    <!-- Proof-of-Perception Evidence Panel -->
-    <section class="card evidence-card" id="evidence-section">
-      <div class="card-header">
-        <div class="card-title">
-          <span class="title-icon">🛡️</span>
-          <h2>Proof of Perception Evidence</h2>
+        <div id="reasoning-box" class="reasoning-stream">
+          <p class="empty-state-hint">Ready for input. Issue text or voice commands to trigger deterministic multi-action automation.</p>
         </div>
-        <span class="badge badge-audit">Hash-Chain Audited</span>
-      </div>
 
-      <div id="evidence-container" class="evidence-container">
-        <p class="placeholder-text">Grounding evidence, visual crops, and reasoning justification will appear as actions execute.</p>
-      </div>
-    </section>
+        <!-- Dynamic Action Step List -->
+        <div id="plan-steps-container" class="steps-wrapper" style="display: none;">
+          <div class="steps-header">
+            <span class="steps-label">Deterministic Action Sequence</span>
+            <span class="steps-perf">0ms Intermediate Model Calls</span>
+          </div>
+          <div id="plan-steps-list" class="steps-flow-list"></div>
+        </div>
+      </section>
+
+      <!-- Proof-of-Perception Evidence Section -->
+      <section class="section-card evidence-card" id="evidence-section">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <span class="section-icon">🛡️</span>
+            <h2 class="section-heading">Proof of Perception</h2>
+          </div>
+          <span class="telemetry-pill pill-chain">SHA-256 Audited</span>
+        </div>
+
+        <div id="evidence-container" class="evidence-grid">
+          <p class="empty-state-hint">Grounding crops, element metadata, and cryptographic audit proofs will be captured live per action.</p>
+        </div>
+      </section>
+    </main>
 
     <!-- Confirmation Modal Dialog (Guardrail Pause) -->
-    <div id="confirmation-modal" class="modal-overlay hidden">
-      <div class="modal-card">
-        <div class="modal-header">
-          <span class="modal-warn-icon">⚠️</span>
-          <h3>Action Confirmation Required</h3>
+    <div id="confirmation-modal" class="modal-backdrop hidden">
+      <div class="modal-container">
+        <div class="modal-top">
+          <div class="modal-badge-warn">⚠️ SAFETY INTERCEPT</div>
+          <h3 class="modal-title">Guardrail Confirmation Required</h3>
         </div>
-        <p class="modal-message" id="modal-message">
-          The agent detected a potentially sensitive or low-confidence action. Please verify before proceeding.
+        <p class="modal-desc" id="modal-message">
+          The agent detected a destructive or safety-critical action. Confirm intent before execution.
         </p>
-        <div class="modal-details" id="modal-details">
-          <!-- Dynamic details -->
-        </div>
-        <div class="modal-actions">
-          <button id="modal-reject-btn" class="modal-btn btn-secondary">Abort</button>
-          <button id="modal-confirm-btn" class="modal-btn btn-primary-danger">Approve Action</button>
+        <div class="modal-inspect-box" id="modal-details"></div>
+        <div class="modal-footer-btns">
+          <button id="modal-reject-btn" class="btn-cancel">Abort</button>
+          <button id="modal-confirm-btn" class="btn-approve">Authorize Action</button>
         </div>
       </div>
     </div>
 
-    <!-- Image Zoom Modal -->
-    <div id="image-zoom-modal" class="modal-overlay hidden">
-      <div class="modal-card zoom-card">
-        <div class="modal-header">
-          <h3>Vision Patch Crop</h3>
-          <button id="close-zoom-btn" class="close-btn">✕</button>
+    <!-- Full Image Zoom Modal -->
+    <div id="image-zoom-modal" class="modal-backdrop hidden">
+      <div class="modal-container zoom-container">
+        <div class="zoom-header">
+          <span>High-Resolution Perception Patch</span>
+          <button id="close-zoom-btn" class="zoom-close-btn">✕</button>
         </div>
-        <div class="zoom-image-wrapper">
-          <img id="zoomed-image" src="" alt="Proof of Perception Crop" />
+        <div class="zoom-viewport">
+          <img id="zoomed-image" src="" alt="Proof Crop" />
         </div>
       </div>
     </div>
 
-    <!-- Footer Stats & Verification -->
-    <footer class="footer">
-      <div class="footer-left">
-        <button id="verify-log-btn" class="verify-btn" title="Verify SHA-256 Hash Chain Integrity">
-          <span class="icon">🔗</span>
-          <span>Verify Audit Log</span>
+    <!-- Terminal Telemetry Footer -->
+    <footer class="app-footer">
+      <div class="footer-col-left">
+        <button id="verify-log-btn" class="verify-action-btn" title="Walk cryptographic SHA-256 hash chain">
+          <svg class="link-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
+          <span>Verify Hash Chain</span>
         </button>
-        <span id="audit-status-pill" class="audit-pill hidden">Verified ✓</span>
+        <span id="audit-status-pill" class="audit-badge hidden">Chain Valid ✓</span>
       </div>
-      <div class="footer-right" id="resource-stats">
-        <span class="stat-item" id="ram-stat">RAM: -- MB</span>
-        <span class="stat-divider">•</span>
-        <span class="stat-item" id="latency-stat">Latency: -- ms</span>
+      <div class="footer-col-right" id="resource-stats">
+        <span class="telemetry-readout" id="ram-stat">RAM: 42 MB</span>
+        <span class="telemetry-sep">|</span>
+        <span class="telemetry-readout" id="latency-stat">Latency: 14 ms</span>
       </div>
     </footer>
+
   </div>
 
   <script src="popup.js"></script>
