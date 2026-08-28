@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "SIH26171 Browser AI Agent",
   "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnqy9KhEiA67zPpkIlZ0BiC1ZnjVUMZL0b5PlMLJklcLZiGoJk4A0fQup9QFTFX1iWvIoHP0cmca8PLrgqFJwSfpmeBzvqGlmwdXOMnEV9pi65PxgCbRUpMK+OlGbLshyV4cNJMyaVfj1LzNVdfwfvkQA3O37sA14qAG+GIRRxXTTYhpI5YgesY0ktY+bIlNevgep00ztVXbqKjVW5ZBr93JRf+kGFWXWibyKL7GjG56FvoSUO5YjSXt1804zl3dI56yI774vumyOPWv8COl+raKXLAMnZogbWCvaiVWyQVLqJbbPeVcz1mzVrejSTlsXPGj3v6CfjwCy44/ukrwh3QIDAQAB",
   "description": "On-device visual perception browser agent — ISRO SIH26171",
   "permissions": [
     "activeTab",

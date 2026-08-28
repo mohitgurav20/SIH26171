@@ -223,14 +223,11 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStatus('thinking', 'Planning actions for command...');
   }
 
-  // Voice Mic Toggle & Real-time Speech Recognition
+  // Voice Mic Toggle & Recording Handler
   const liveTranscript = document.getElementById('live-transcript');
   const voiceStopBtn = document.getElementById('voice-stop-btn');
-  let speechRec = null;
-  let popupAudioStream = null;
-  let popupAudioCtx = null;
-  let popupAnalyser = null;
-  let animFrameId = null;
+  const micStatusLabel = document.getElementById('mic-status-label');
+  let waveAnimInterval = null;
 
   if (voiceStopBtn) {
     voiceStopBtn.addEventListener('click', () => {
@@ -238,118 +235,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function startLocalSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    try {
-      if (speechRec) {
-        try { speechRec.stop(); } catch(e) {}
-      }
-
-      speechRec = new SpeechRecognition();
-      speechRec.continuous = true;
-      speechRec.interimResults = true;
-      speechRec.lang = navigator.language || 'en-IN';
-
-      speechRec.onresult = (event) => {
-        let interim = '';
-        let final = '';
-        for (let i = 0; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            final += event.results[i][0].transcript + ' ';
-          } else {
-            interim += event.results[i][0].transcript;
-          }
-        }
-        const full = (final + interim).trim();
-        if (full) {
-          if (liveTranscript) {
-            liveTranscript.textContent = full;
-            liveTranscript.classList.add('has-text');
-          }
-          commandInput.value = full;
-        }
-      };
-
-      speechRec.onerror = (e) => {
-        console.warn('[Popup] Speech Recognition error:', e.error);
-        if (e.error === 'not-allowed') {
-          chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
-        }
-      };
-
-      speechRec.onend = () => {
-        if (isRecording && speechRec) {
-          try { speechRec.start(); } catch(e) {}
-        }
-      };
-
-      speechRec.start();
-    } catch (err) {
-      console.warn('[Popup] SpeechRecognition init failed:', err);
-    }
-  }
-
-  function stopLocalSpeechRecognition() {
-    if (speechRec) {
-      try { speechRec.stop(); } catch(e) {}
-      speechRec = null;
-    }
-  }
-
-  async function startVisualizer() {
-    try {
-      popupAudioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      popupAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = popupAudioCtx.createMediaStreamSource(popupAudioStream);
-      popupAnalyser = popupAudioCtx.createAnalyser();
-      popupAnalyser.fftSize = 64;
-      source.connect(popupAnalyser);
-
-      const dataArray = new Uint8Array(popupAnalyser.frequencyBinCount);
-      const waves = voiceRecordingBar.querySelectorAll('.voice-waves span');
-
-      function updateBars() {
-        if (!isRecording) return;
-        popupAnalyser.getByteFrequencyData(dataArray);
-        waves.forEach((s, idx) => {
-          const val = (dataArray[idx * 3] || dataArray[idx] || 10) / 255;
-          const h = Math.max(3, Math.min(18, Math.round(val * 24)));
-          s.style.height = `${h}px`;
-        });
-        animFrameId = requestAnimationFrame(updateBars);
-      }
-      updateBars();
-    } catch (e) {
-      console.warn('[Popup] Visualizer error:', e);
-    }
-  }
-
-  function stopVisualizer() {
-    if (animFrameId) cancelAnimationFrame(animFrameId);
-    if (popupAudioStream) {
-      popupAudioStream.getTracks().forEach(t => t.stop());
-      popupAudioStream = null;
-    }
-    if (popupAudioCtx && popupAudioCtx.state !== 'closed') {
-      popupAudioCtx.close();
-      popupAudioCtx = null;
-    }
-  }
-
-  const micStatusLabel = document.getElementById('mic-status-label');
-
   async function handleToggleMic() {
     if (!isRecording) {
-      // Check if one-time permission has been granted
-      const stored = await chrome.storage.local.get('mic_permission_granted');
-      if (!stored.mic_permission_granted) {
-        chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
-        reasoningBox.innerHTML = `<em>Please click <strong>"Allow Microphone Access"</strong> in the opened tab to enable voice.</em>`;
-        return;
-      }
-
       isRecording = true;
       micBtn.classList.add('recording');
       voiceRecordingBar.classList.remove('hidden');
@@ -358,45 +245,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Reset live transcript
       if (liveTranscript) {
-        liveTranscript.textContent = 'Listening... Speak your command';
+        liveTranscript.textContent = 'Listening to your voice...';
         liveTranscript.classList.remove('has-text');
       }
 
-      // Start local visualizer and speech recognition
-      startVisualizer();
-      startLocalSpeechRecognition();
+      // Animate wave bars smoothly
+      if (waveAnimInterval) clearInterval(waveAnimInterval);
+      waveAnimInterval = setInterval(() => {
+        if (!isRecording) { clearInterval(waveAnimInterval); return; }
+        const waves = voiceRecordingBar.querySelectorAll('.wave-visualizer span');
+        waves.forEach((s, idx) => {
+          const h = 4 + Math.round(Math.random() * 12);
+          s.style.height = `${h}px`;
+        });
+      }, 120);
 
-      // Tell background service worker to start recording via offscreen
-      chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
-        if (res && res.error) {
-          console.error('Recording error:', res.error);
-        }
-      });
-
+      // Start recording timer
       recordingInterval = setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
         const min = Math.floor(elapsedSec / 60);
         const sec = elapsedSec % 60;
         recordingTimer.textContent = `${min}:${sec < 10 ? '0' : ''}${sec}`;
       }, 500);
+
+      // Trigger background offscreen recording & webpage speech recognition
+      chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
+        if (res && res.error) {
+          console.warn('[Popup] start_recording error:', res.error);
+        }
+      });
     } else {
       // Stop recording
       isRecording = false;
       micBtn.classList.remove('recording');
       voiceRecordingBar.classList.add('hidden');
       if (micStatusLabel) micStatusLabel.textContent = 'Tap to speak in English, Hindi, or Kannada';
-      clearInterval(recordingInterval);
-
-      // Stop speech and visualizer
-      stopLocalSpeechRecognition();
-      stopVisualizer();
+      if (recordingInterval) clearInterval(recordingInterval);
+      if (waveAnimInterval) clearInterval(waveAnimInterval);
 
       // Extract recognized text
       const capturedText = commandInput.value.trim();
       if (capturedText && !capturedText.startsWith('Listening')) {
         reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
       } else {
-        reasoningBox.innerHTML = `<em>Audio captured. Transcribing on-device...</em>`;
+        reasoningBox.innerHTML = `<em>Audio captured. Ready to run.</em>`;
       }
 
       updateStatus('online', 'Agent Ready');
@@ -542,7 +434,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Update Status Pill
   function updateStatus(state, msg) {
     if (!statusIndicator) return;
-    statusIndicator.className = 'chip chip-online';
+    statusIndicator.className = 'status-pill';
     const label = statusIndicator.querySelector('.status-label');
     if (label) {
       if (state === 'thinking') {
@@ -550,7 +442,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (state === 'acting') {
         label.textContent = 'Executing...';
       } else {
-        label.textContent = 'On-Device';
+        label.textContent = 'Ready';
       }
     }
   }

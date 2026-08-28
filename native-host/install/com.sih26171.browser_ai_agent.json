@@ -4,6 +4,8 @@
   "path": "D:\\Browser ai agent\\Browser-AI-agent\\native-host\\install\\voicc_host.bat",
   "type": "stdio",
   "allowed_origins": [
+    "chrome-extension://habnpeooaamdocmolhcnjfpjokiaefja/",
+    "chrome-extension://ghbmnnjooekpmoecnnnilnnbdlolhkhi/",
     "chrome-extension://ghbmnpjoekpmoecpppjlpnbdlolbkhi/",
     "chrome-extension://*/*"
   ]
