@@ -145,6 +145,17 @@ document.addEventListener('DOMContentLoaded', () => {
         addEvidenceCard(message.payload);
         break;
 
+      case 'voice_volume_level':
+        if (voiceRecordingBar && !voiceRecordingBar.classList.contains('hidden')) {
+          const waves = voiceRecordingBar.querySelectorAll('.voice-waves span');
+          const lvl = message.level || 0.1;
+          waves.forEach((s, idx) => {
+            const h = Math.max(3, Math.min(18, Math.round(lvl * 20 * (0.5 + 0.5 * Math.sin(idx * 1.2 + Date.now() / 80)))));
+            s.style.height = `${h}px`;
+          });
+        }
+        break;
+
       case 'speech_live_transcript':
         if (message.text) {
           if (liveTranscript) {

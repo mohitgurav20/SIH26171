@@ -95,15 +95,39 @@ async function cropImagePatch(payload) {
  */
 async function startAudioRecording() {
   recordedPCMData = [];
-  audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  try {
+    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    console.warn('[Offscreen] getUserMedia failed, opening permission tab:', err.message);
+    chrome.tabs.create({ url: 'permission.html' });
+    throw new Error('Microphone permission required. Please allow access in the opened tab.');
+  }
+
   audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
 
   // Buffer size 4096, 1 input channel, 1 output channel
   audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+  let lastBroadcast = 0;
+
   audioProcessor.onaudioprocess = (e) => {
     const inputData = e.inputBuffer.getChannelData(0);
     recordedPCMData.push(new Float32Array(inputData));
+
+    const now = Date.now();
+    if (now - lastBroadcast > 120) {
+      lastBroadcast = now;
+      let sum = 0;
+      for (let i = 0; i < inputData.length; i += 8) {
+        sum += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sum / (inputData.length / 8));
+      chrome.runtime.sendMessage({
+        type: 'voice_volume_level',
+        level: Math.min(1.0, rms * 10),
+        isSpeaking: rms > 0.015
+      }).catch(() => {});
+    }
   };
 
   mediaStreamSource.connect(audioProcessor);
