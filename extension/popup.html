@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIH26171 Browser AI Agent</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>🤖 Browser AI Agent</h1>
+      <span id="status-indicator" class="status offline">Offline</span>
+    </header>
+
+    <section id="command-section">
+      <div id="input-row">
+        <input type="text" id="command-input" placeholder="Type a command..." autocomplete="off" />
+        <button id="mic-btn" title="Voice input">🎤</button>
+        <button id="send-btn" title="Send command">➤</button>
+      </div>
+      <div id="language-selector">
+        <label><input type="radio" name="lang" value="en" checked> EN</label>
+        <label><input type="radio" name="lang" value="hi"> HI</label>
+        <label><input type="radio" name="lang" value="kn"> KN</label>
+      </div>
+    </section>
+
+    <section id="reasoning-trail">
+      <h2>Reasoning Trail</h2>
+      <div id="trail-content">
+        <p class="placeholder">Send a command to see the reasoning trail...</p>
+      </div>
+    </section>
+
+    <section id="evidence-panel">
+      <h2>Evidence</h2>
+      <div id="evidence-content">
+        <p class="placeholder">Action evidence will appear here...</p>
+      </div>
+    </section>
+
+    <footer>
+      <button id="verify-log-btn" title="Verify hash-chain log">🔗 Verify Log</button>
+      <span id="resource-stats">RAM: -- | Latency: --</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

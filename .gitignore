@@ -1,0 +1,82 @@
+# ========================
+# Python
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+*.egg-info/
+.eggs/
+dist/
+build/
+*.whl
+
+# ========================
+# Node.js
+# ========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+package-lock.json
+
+# ========================
+# Chrome Extension
+# ========================
+*.crx
+*.pem
+*.zip
+
+# ========================
+# Chroma DB (local persistence)
+# ========================
+chroma_data/
+memory/chroma_data/
+
+# ========================
+# Models (large files)
+# ========================
+models/
+*.gguf
+*.onnx
+*.bin
+*.safetensors
+
+# ========================
+# IDE / Editor
+# ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ========================
+# Environment / Secrets
+# ========================
+.env
+.env.local
+*.key
+*.pem
+
+# ========================
+# Logs / Benchmarks
+# ========================
+logs/
+*.log
+benchmark_results/
+
+# ========================
+# OS
+# ========================
+Desktop.ini
+ehthumbs.db

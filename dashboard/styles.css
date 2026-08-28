@@ -1,0 +1,262 @@
+/* SIH26171 ISRO Mission Control Theme */
+
+:root {
+  --bg-dark: #0a0f1d;
+  --panel-bg: #11192e;
+  --card-bg: #16203c;
+  --primary: #00d4ff;
+  --primary-hover: #00aacc;
+  --accent: #ff8800;
+  --danger: #ff3366;
+  --success: #00ff88;
+  --warning: #ffbb00;
+  --text-main: #e2e8f0;
+  --text-muted: #94a3b8;
+  --border: #1e293b;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  min-height: 100vh;
+}
+
+/* Layout */
+.layout {
+  display: flex;
+  height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 240px;
+  background-color: var(--panel-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 30px;
+}
+
+.isro-logo-dot {
+  width: 14px;
+  height: 14px;
+  background-color: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--accent);
+}
+
+.brand h2 {
+  font-size: 18px;
+  color: var(--primary);
+  letter-spacing: 1px;
+}
+
+nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.nav-item {
+  display: block;
+  padding: 10px 14px;
+  color: var(--text-muted);
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.nav-item:hover, .nav-item.active {
+  background-color: var(--card-bg);
+  color: var(--primary);
+}
+
+.btn-logout {
+  color: var(--danger);
+  text-decoration: none;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+/* Main Content */
+.main-content {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.topbar h1 {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* Buttons */
+button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary { background: var(--primary); color: #000; }
+.btn-primary:hover { background: var(--primary-hover); }
+
+.btn-secondary { background: var(--card-bg); color: var(--text-main); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--panel-bg); }
+
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { opacity: 0.9; }
+
+.btn-action { background: #1e3a8a; color: #93c5fd; padding: 4px 10px; font-size: 12px; }
+.btn-action:hover { background: #2563eb; color: #fff; }
+
+/* Filter Bar */
+.filter-bar {
+  display: flex;
+  gap: 12px;
+  background: var(--panel-bg);
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.filter-bar input, .filter-bar select {
+  padding: 8px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  border-radius: 6px;
+  outline: none;
+}
+
+.filter-bar input { flex: 1; }
+
+/* Table */
+.table-section {
+  background: var(--panel-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px;
+}
+
+thead {
+  background: var(--card-bg);
+  color: var(--text-muted);
+}
+
+th, td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Badges */
+.badge {
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badge-success { background: rgba(0, 255, 136, 0.15); color: var(--success); }
+.badge-warning { background: rgba(255, 187, 0, 0.15); color: var(--warning); }
+.badge-danger { background: rgba(255, 51, 102, 0.15); color: var(--danger); }
+
+/* Canvas Section */
+.canvas-section {
+  background: var(--panel-bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  padding: 16px;
+}
+
+.canvas-section h2 { font-size: 15px; margin-bottom: 4px; }
+.canvas-section .desc { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+
+#orbit-canvas {
+  background: #050811;
+  border-radius: 6px;
+  border: 1px solid #1a233a;
+  width: 100%;
+  max-width: 800px;
+}
+
+/* Login Page Styles */
+.login-body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.login-card {
+  width: 360px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.logo-header { text-align: center; margin-bottom: 24px; }
+.isro-badge { display: inline-block; background: var(--accent); color: #fff; font-weight: 700; padding: 4px 12px; border-radius: 4px; font-size: 12px; margin-bottom: 8px; }
+.subtitle { font-size: 12px; color: var(--text-muted); }
+
+.form-group {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label { font-size: 12px; color: var(--text-muted); }
+.form-group input, .form-group select {
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  border-radius: 6px;
+  outline: none;
+}

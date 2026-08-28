@@ -1,0 +1,153 @@
+/* SIH26171 Browser AI Agent — Popup Styles */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  width: 380px;
+  min-height: 500px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  gap: 12px;
+}
+
+/* Header */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+header h1 {
+  font-size: 16px;
+  color: #00d4ff;
+}
+
+.status {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.status.offline { background: #ff4444; color: #fff; }
+.status.connected { background: #00c853; color: #fff; }
+.status.thinking { background: #ffc107; color: #000; }
+
+/* Command Input */
+#input-row {
+  display: flex;
+  gap: 6px;
+}
+
+#command-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #16213e;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+}
+
+#command-input:focus {
+  border-color: #00d4ff;
+}
+
+#mic-btn, #send-btn {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #16213e;
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+#mic-btn:hover, #send-btn:hover {
+  background: #0f3460;
+}
+
+#mic-btn.recording {
+  background: #ff4444;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Language Selector */
+#language-selector {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  margin-top: 4px;
+  color: #888;
+}
+
+#language-selector label {
+  cursor: pointer;
+}
+
+/* Reasoning Trail */
+#reasoning-trail, #evidence-panel {
+  background: #16213e;
+  border-radius: 8px;
+  padding: 10px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+#reasoning-trail h2, #evidence-panel h2 {
+  font-size: 12px;
+  color: #00d4ff;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.placeholder {
+  color: #555;
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* Footer */
+footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+#verify-log-btn {
+  padding: 6px 10px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: transparent;
+  color: #00d4ff;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+#verify-log-btn:hover {
+  background: #16213e;
+}
+
+#resource-stats {
+  font-size: 10px;
+  color: #555;
+}

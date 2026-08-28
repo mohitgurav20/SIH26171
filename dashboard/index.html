@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ISRO Mission Control — Telemetry & Payloads</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="isro-logo-dot"></span>
+        <h2>ISRO MOS</h2>
+      </div>
+      <nav>
+        <a href="#telemetry" class="nav-item active" id="nav-telemetry">🛰️ Satellite Telemetry</a>
+        <a href="#payloads" class="nav-item" id="nav-payloads">📡 Sensor Payloads</a>
+        <a href="#canvas-view" class="nav-item" id="nav-orbit">🌍 Orbital Visualizer</a>
+        <a href="#audit" class="nav-item" id="nav-audit">🔒 Security Audit</a>
+      </nav>
+      <div class="sidebar-footer">
+        <a href="login.html" id="btn-logout" class="btn-logout">Logout</a>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="topbar">
+        <h1>Satellite Telemetry Stream — Chandrayaan / Cartosat Fleet</h1>
+        <div class="actions">
+          <button id="btn-refresh" class="btn-secondary">🔄 Refresh Stream</button>
+          <button id="btn-export" class="btn-secondary">📥 Export CSV</button>
+          <button id="btn-emergency-stop" class="btn-danger">⚠️ Emergency Halt</button>
+        </div>
+      </header>
+
+      <!-- Filter Controls -->
+      <section class="filter-bar">
+        <input type="text" id="search-filter" placeholder="Search satellite or orbit..." />
+        <select id="status-filter">
+          <option value="ALL">All Statuses</option>
+          <option value="NOMINAL">Nominal</option>
+          <option value="CALIBRATING">Calibrating</option>
+          <option value="ALERT">Alert</option>
+        </select>
+        <button id="btn-apply-filters" class="btn-primary">Apply Filters</button>
+      </section>
+
+      <!-- Data Table (12 realistic rows) -->
+      <section class="table-section">
+        <table id="telemetry-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Spacecraft Name</th>
+              <th>Orbit Altitude (km)</th>
+              <th>Inclination (°)</th>
+              <th>Battery (%)</th>
+              <th>Thermal (K)</th>
+              <th>Status</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>SAT-01</td>
+              <td>Cartosat-3A</td>
+              <td>505.2</td>
+              <td>97.5°</td>
+              <td>98%</td>
+              <td>293.4</td>
+              <td><span class="badge badge-success">NOMINAL</span></td>
+              <td><button class="btn-action" data-sat="Cartosat-3A">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-02</td>
+              <td>EOS-04 (RISAT-1A)</td>
+              <td>529.0</td>
+              <td>97.5°</td>
+              <td>94%</td>
+              <td>290.1</td>
+              <td><span class="badge badge-success">NOMINAL</span></td>
+              <td><button class="btn-action" data-sat="EOS-04">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-03</td>
+              <td>Oceansat-3</td>
+              <td>720.0</td>
+              <td>98.2°</td>
+              <td>89%</td>
+              <td>295.2</td>
+              <td><span class="badge badge-success">NOMINAL</span></td>
+              <td><button class="btn-action" data-sat="Oceansat-3">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-04</td>
+              <td>Aditya-L1 (STEPS)</td>
+              <td>1495978.7</td>
+              <td>0.0°</td>
+              <td>100%</td>
+              <td>288.6</td>
+              <td><span class="badge badge-warning">CALIBRATING</span></td>
+              <td><button class="btn-action" data-sat="Aditya-L1">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-05</td>
+              <td>GSAT-24</td>
+              <td>35786.0</td>
+              <td>0.1°</td>
+              <td>91%</td>
+              <td>294.0</td>
+              <td><span class="badge badge-success">NOMINAL</span></td>
+              <td><button class="btn-action" data-sat="GSAT-24">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-06</td>
+              <td>ResourceSat-2A</td>
+              <td>817.0</td>
+              <td>98.7°</td>
+              <td>86%</td>
+              <td>291.5</td>
+              <td><span class="badge badge-success">NOMINAL</span></td>
+              <td><button class="btn-action" data-sat="ResourceSat-2A">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-07</td>
+              <td>AstroSat-UVIT</td>
+              <td>650.0</td>
+              <td>6.0°</td>
+              <td>79%</td>
+              <td>289.0</td>
+              <td><span class="badge badge-danger">ALERT</span></td>
+              <td><button class="btn-action" data-sat="AstroSat">Calibrate</button></td>
+            </tr>
+            <tr>
+              <td>SAT-08</td>
+              <td>XPoSat-POLIX</td>
+              <td>650.0</td>
+              <td>6.0°</td>
+              <td>96%</td>
+              <td>292.0</td>
+              <td><span class="badge badge-success">NOMINAL</span></td>
+              <td><button class="btn-action" data-sat="XPoSat">Calibrate</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Canvas Widget (Task #35: Non-DOM-friendly visual component) -->
+      <section class="canvas-section">
+        <h2>🌍 Real-time Orbital Tracking Plane (Canvas Non-DOM Render)</h2>
+        <p class="desc">This canvas renders satellite trajectories visually without exposing text nodes to the DOM.</p>
+        <canvas id="orbit-canvas" width="800" height="260"></canvas>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

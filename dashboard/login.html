@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ISRO Mission Control — Login</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="logo-header">
+      <div class="isro-badge">ISRO</div>
+      <h2>Mission Operations Portal</h2>
+      <p class="subtitle">SIH26171 Secure Environment</p>
+    </div>
+    <form id="login-form" onsubmit="event.preventDefault(); window.location.href='index.html';">
+      <div class="form-group">
+        <label for="username">Operator ID</label>
+        <input type="text" id="username" placeholder="e.g. ISRO-OP-402" required value="ISRO-OP-402">
+      </div>
+      <div class="form-group">
+        <label for="password">Access Token</label>
+        <input type="password" id="password" placeholder="••••••••••••" required value="secure-token-demo">
+      </div>
+      <div class="form-group">
+        <label for="station">Ground Station</label>
+        <select id="station">
+          <option value="ISTRAC_BLR">ISTRAC Bengaluru</option>
+          <option value="SDSC_SHAR">SDSC SHAR Sriharikota</option>
+          <option value="SAC_AHM">SAC Ahmedabad</option>
+        </select>
+      </div>
+      <button type="submit" id="btn-login" class="btn-primary">Authenticate & Access Dashboard</button>
+    </form>
+  </div>
+</body>
+</html>
