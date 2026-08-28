@@ -211,6 +211,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
 
     case 'start_recording':
+      // Start audio stream in offscreen document
       ensureOffscreenDocument().then(() => {
         chrome.runtime.sendMessage({
           target: 'offscreen',
@@ -221,9 +222,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }).catch((err) => {
         sendResponse({ error: err.message });
       });
+
+      // Also trigger webpage speech recognition in active tab
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'start_speech_recognition' }).catch(() => {});
+        }
+      });
       return true;
 
     case 'stop_recording':
+      // Stop speech recognition in active tab
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'stop_speech_recognition' }).catch(() => {});
+        }
+      });
+
       chrome.runtime.sendMessage({
         target: 'offscreen',
         type: 'stop_mic_recording'

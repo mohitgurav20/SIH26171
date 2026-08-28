@@ -571,11 +571,91 @@
         return true;
       }
 
+      case 'start_speech_recognition': {
+        const started = startWebSpeechRecognition();
+        sendResponse({ success: started });
+        break;
+      }
+
+      case 'stop_speech_recognition': {
+        stopWebSpeechRecognition();
+        sendResponse({ success: true });
+        break;
+      }
+
       default:
         sendResponse({ status: 'unhandled_message' });
     }
     return true;
   });
+
+  // Live Speech Recognition Engine running in webpage context
+  let contentSpeechRec = null;
+  let isContentSpeechActive = false;
+
+  function startWebSpeechRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      console.warn('[Content] Web Speech API not supported in this window');
+      return false;
+    }
+
+    try {
+      if (contentSpeechRec) {
+        try { contentSpeechRec.stop(); } catch(e) {}
+      }
+
+      contentSpeechRec = new SpeechRecognition();
+      contentSpeechRec.continuous = true;
+      contentSpeechRec.interimResults = true;
+      contentSpeechRec.lang = navigator.language || 'en-IN';
+      isContentSpeechActive = true;
+
+      contentSpeechRec.onresult = (event) => {
+        let interimText = '';
+        let finalText = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            finalText += res[0].transcript + ' ';
+          } else {
+            interimText += res[0].transcript;
+          }
+        }
+        const fullTranscript = (finalText + interimText).trim();
+        if (fullTranscript) {
+          chrome.runtime.sendMessage({
+            type: 'speech_live_transcript',
+            text: fullTranscript
+          }).catch(() => {});
+        }
+      };
+
+      contentSpeechRec.onerror = (event) => {
+        console.warn('[Content] Speech recognition event error:', event.error);
+      };
+
+      contentSpeechRec.onend = () => {
+        if (isContentSpeechActive && contentSpeechRec) {
+          try { contentSpeechRec.start(); } catch(e) {}
+        }
+      };
+
+      contentSpeechRec.start();
+      return true;
+    } catch (err) {
+      console.warn('[Content] Failed to start SpeechRecognition:', err);
+      return false;
+    }
+  }
+
+  function stopWebSpeechRecognition() {
+    isContentSpeechActive = false;
+    if (contentSpeechRec) {
+      try { contentSpeechRec.stop(); } catch(e) {}
+      contentSpeechRec = null;
+    }
+  }
 
   console.log('[SIH26171] Advanced Content Script initialized');
 })();

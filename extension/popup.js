@@ -145,10 +145,24 @@ document.addEventListener('DOMContentLoaded', () => {
         addEvidenceCard(message.payload);
         break;
 
+      case 'speech_live_transcript':
+        if (message.text) {
+          if (liveTranscript) {
+            liveTranscript.textContent = message.text;
+            liveTranscript.classList.add('has-text');
+          }
+          commandInput.value = message.text;
+        }
+        break;
+
       case 'transcription':
         if (message.payload?.text) {
           commandInput.value = message.payload.text;
-          reasoningBox.innerHTML = `<strong>Transcribed Voice:</strong> "${message.payload.text}" (${message.payload.language?.toUpperCase() || 'EN'})`;
+          if (liveTranscript) {
+            liveTranscript.textContent = message.payload.text;
+            liveTranscript.classList.add('has-text');
+          }
+          reasoningBox.innerHTML = `<strong>Transcribed Voice:</strong> "${message.payload.text}"`;
         }
         break;
 
@@ -198,9 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStatus('thinking', 'Planning actions for command...');
   }
 
-  // Voice Mic Toggle — Delegates to background/offscreen for MV3 mic access
-  // Uses Web Speech API for real-time live preview (what the user is saying)
-  let speechRecognition = null;
+  // Voice Mic Toggle — Delegates to background & active tab for live speech recognition
   const liveTranscript = document.getElementById('live-transcript');
   const voiceStopBtn = document.getElementById('voice-stop-btn');
 
@@ -212,15 +224,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function handleToggleMic() {
     if (!isRecording) {
-      // Tell background service worker to start recording via offscreen document
-      chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
-        if (res && res.error) {
-          console.error('Recording failed:', res.error);
-          reasoningBox.innerHTML = `<em style="color:#ef4444;">Mic Error: ${res.error}</em>`;
-          return;
-        }
-      });
-
       isRecording = true;
       micBtn.classList.add('recording');
       voiceRecordingBar.classList.remove('hidden');
@@ -228,58 +231,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Reset live transcript
       if (liveTranscript) {
-        liveTranscript.textContent = 'Start speaking...';
+        liveTranscript.textContent = 'Listening... Speak your command';
         liveTranscript.classList.remove('has-text');
       }
 
-      // Start live preview using Web Speech API (browser-native, works in Chrome)
-      try {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (SpeechRecognition) {
-          speechRecognition = new SpeechRecognition();
-          speechRecognition.continuous = true;
-          speechRecognition.interimResults = true;
-          // Use navigator language or default to en-IN (works well for English + Hindi mixed speech)
-          speechRecognition.lang = navigator.language || 'en-IN';
-          speechRecognition.maxAlternatives = 1;
-
-          // Auto-restart if recognition stops prematurely while still recording
-          speechRecognition.onend = () => {
-            if (isRecording && speechRecognition) {
-              try { speechRecognition.start(); } catch(e) {}
-            }
-          };
-
-          let finalText = '';
-
-          speechRecognition.onresult = (event) => {
-            let interimText = '';
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-              const transcript = event.results[i][0].transcript;
-              if (event.results[i].isFinal) {
-                finalText += transcript + ' ';
-              } else {
-                interimText += transcript;
-              }
-            }
-
-            if (liveTranscript) {
-              const display = (finalText + interimText).trim();
-              liveTranscript.textContent = display || 'Listening...';
-              liveTranscript.classList.toggle('has-text', display.length > 0);
-            }
-          };
-
-          speechRecognition.onerror = (e) => {
-            console.warn('Speech preview error:', e.error);
-            if (liveTranscript) liveTranscript.textContent = 'Listening (preview unavailable)...';
-          };
-
-          speechRecognition.start();
+      // Tell background service worker to start recording & trigger speech recognition
+      chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
+        if (res && res.error) {
+          console.error('Recording error:', res.error);
         }
-      } catch (e) {
-        console.warn('Web Speech API not available for preview:', e);
-      }
+      });
 
       recordingInterval = setInterval(() => {
         const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
@@ -294,22 +255,15 @@ document.addEventListener('DOMContentLoaded', () => {
       voiceRecordingBar.classList.add('hidden');
       clearInterval(recordingInterval);
 
-      // Stop live speech preview
-      if (speechRecognition) {
-        try { speechRecognition.stop(); } catch(e) {}
-        speechRecognition = null;
-      }
-
-      // Show what was captured in reasoning box
-      const capturedText = liveTranscript ? liveTranscript.textContent : '';
-      if (capturedText && capturedText !== 'Start speaking...' && capturedText !== 'Listening...') {
-        reasoningBox.innerHTML = `<strong>Voice:</strong> "${escapeHtml(capturedText)}"<br><em style="color:#6b7280">Transcribing on-device for precision...</em>`;
-        commandInput.value = capturedText;
+      // Extract recognized text
+      const capturedText = commandInput.value.trim();
+      if (capturedText && !capturedText.startsWith('Listening')) {
+        reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
       } else {
-        reasoningBox.innerHTML = `<em>Processing recorded audio...</em>`;
+        reasoningBox.innerHTML = `<em>Audio captured. Ready to run.</em>`;
       }
 
-      updateStatus('thinking', 'Transcribing audio on-device...');
+      updateStatus('online', 'Agent Ready');
       chrome.runtime.sendMessage({ type: 'stop_recording' });
     }
   }
@@ -451,13 +405,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Update Status Pill
   function updateStatus(state, msg) {
-    if (!state) state = 'connected';
-    const stateClass = `status-${state}`;
-    statusIndicator.className = `status-pill ${stateClass}`;
-
+    if (!statusIndicator) return;
+    statusIndicator.className = 'chip chip-online';
     const label = statusIndicator.querySelector('.status-label');
     if (label) {
-      label.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+      if (state === 'thinking') {
+        label.textContent = 'Thinking...';
+      } else if (state === 'acting') {
+        label.textContent = 'Executing...';
+      } else {
+        label.textContent = 'On-Device';
+      }
     }
   }
 
