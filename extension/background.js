@@ -1,6 +1,7 @@
 /**
  * SIH26171 — Background Service Worker
- * Coordinates native messaging, screenshot capture, DOM extraction, offscreen processing, and UI sync.
+ * Native host communication, offscreen task offloading, screenshot captures,
+ * and Task 105 Predictive Prefetching.
  * Owner: Mohit
  */
 
@@ -10,6 +11,8 @@ let nativePort = null;
 let reconnectTimer = null;
 let currentStatus = { state: 'offline', message: '' };
 let latestResourceStats = null;
+let prefetchedState = null;
+let prefetchAbortController = null;
 
 // Connect to native messaging host
 function connectNativeHost() {
@@ -96,9 +99,45 @@ async function captureActiveTabScreenshot() {
   }
 }
 
-// Handle messages from Extension components (popup, content, offscreen)
+/**
+ * Task 105: Predictive prefetch of next page state after navigation-triggering actions
+ */
+async function schedulePredictivePrefetch(activeTabId) {
+  prefetchedState = null;
+  if (prefetchAbortController) {
+    prefetchAbortController.abort();
+  }
+  prefetchAbortController = new AbortController();
+
+  setTimeout(async () => {
+    if (prefetchAbortController.signal.aborted) return;
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tabs[0] || tabs[0].id !== activeTabId) return;
+
+      const domResponse = await chrome.tabs.sendMessage(activeTabId, {
+        type: 'extract_dom',
+        render_overlays: false
+      });
+      const screenshot = await captureActiveTabScreenshot();
+
+      if (!prefetchAbortController.signal.aborted) {
+        prefetchedState = {
+          dom: domResponse?.payload,
+          screenshot,
+          timestamp: Date.now(),
+          url: tabs[0].url
+        };
+        console.log('[Background] Task 105: Predictive prefetch completed in background');
+      }
+    } catch (e) {
+      // Ignored for prefetch
+    }
+  }, 350);
+}
+
+// Handle runtime messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Ignore messages intended for offscreen document
   if (message.target === 'offscreen') return false;
 
   console.log('[Background] Received runtime message:', message.type);
@@ -134,6 +173,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'action_result':
       forwardToNativeHost(message);
+      if (message.payload?.page_changed && sender.tab?.id) {
+        schedulePredictivePrefetch(sender.tab.id);
+      }
       sendResponse({ status: 'sent' });
       break;
 
@@ -185,7 +227,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Full pipeline when a user issues a command
+// Full command pipeline
 async function handleUserCommand(commandPayload) {
   broadcastStatus('thinking', 'Extracting page DOM & capturing context...');
 
@@ -196,25 +238,32 @@ async function handleUserCommand(commandPayload) {
     }
 
     const activeTab = tabs[0];
-
-    // 1. Request DOM extraction from Content Script
     let domData = null;
-    try {
-      const response = await chrome.tabs.sendMessage(activeTab.id, {
-        type: 'extract_dom',
-        render_overlays: false
-      });
-      if (response && response.payload) {
-        domData = response.payload;
+    let screenshot = null;
+
+    // Check if valid prefetch exists for this URL
+    if (prefetchedState && prefetchedState.url === activeTab.url && (Date.now() - prefetchedState.timestamp < 3000)) {
+      console.log('[Background] Task 105: Utilizing prefetched DOM & screenshot!');
+      domData = prefetchedState.dom;
+      screenshot = prefetchedState.screenshot;
+      prefetchedState = null;
+    } else {
+      // Normal fetch
+      try {
+        const response = await chrome.tabs.sendMessage(activeTab.id, {
+          type: 'extract_dom',
+          render_overlays: false
+        });
+        if (response && response.payload) {
+          domData = response.payload;
+        }
+      } catch (err) {
+        console.warn('[Background] Could not extract DOM via content script:', err);
       }
-    } catch (err) {
-      console.warn('[Background] Could not extract DOM via content script:', err);
+
+      screenshot = await captureActiveTabScreenshot();
     }
 
-    // 2. Capture Screenshot
-    const screenshot = await captureActiveTabScreenshot();
-
-    // 3. Send DOM Data to host
     if (domData) {
       forwardToNativeHost({
         type: 'dom_data',
@@ -224,7 +273,6 @@ async function handleUserCommand(commandPayload) {
       });
     }
 
-    // 4. Send Screenshot to host
     if (screenshot) {
       forwardToNativeHost({
         type: 'screenshot',
@@ -237,7 +285,6 @@ async function handleUserCommand(commandPayload) {
       });
     }
 
-    // 5. Send Command to host
     forwardToNativeHost({
       type: 'command',
       id: `cmd-${Date.now()}`,
@@ -252,11 +299,10 @@ async function handleUserCommand(commandPayload) {
   }
 }
 
-// Handle incoming messages from Python Native Host
+// Handle messages from native host
 function handleNativeMessage(message) {
   switch (message.type) {
     case 'action_plan':
-      // Forward plan to content script for execution
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
           chrome.tabs.sendMessage(tabs[0].id, message).catch((err) => {
@@ -264,7 +310,6 @@ function handleNativeMessage(message) {
           });
         }
       });
-      // Forward to popup for UI visualization
       chrome.runtime.sendMessage(message).catch(() => {});
       broadcastStatus('acting', 'Executing planned actions...');
       break;
@@ -304,7 +349,6 @@ function handleNativeMessage(message) {
   }
 }
 
-// Broadcast status to popup
 function broadcastStatus(state, message = '') {
   currentStatus = { state, message };
   chrome.runtime.sendMessage({
@@ -313,7 +357,6 @@ function broadcastStatus(state, message = '') {
   }).catch(() => {});
 }
 
-// Initial connection
 connectNativeHost();
 
-console.log('[SIH26171] Background Service Worker initialized');
+console.log('[SIH26171] Background Service Worker ready');

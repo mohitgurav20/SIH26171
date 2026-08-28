@@ -297,8 +297,23 @@ document.addEventListener('DOMContentLoaded', () => {
       reasoningBox.innerHTML = `<strong>Reasoning:</strong> ${escapeHtml(plan.reasoning)}`;
     }
 
-    // Meta Badges
+    // Meta Badges & Task 78 Cache Invalidation UI Feedback
     planMeta.style.display = 'flex';
+    const cacheBadge = document.getElementById('cache-badge');
+    if (cacheBadge) {
+      if (plan.source === 'cached' || plan.cached_workflow) {
+        cacheBadge.style.display = 'inline-block';
+        cacheBadge.className = 'badge badge-cache cached';
+        cacheBadge.textContent = '⚡ Cached Flow';
+      } else if (plan.source === 'cache_invalidated' || plan.cache_invalidated) {
+        cacheBadge.style.display = 'inline-block';
+        cacheBadge.className = 'badge badge-cache invalidated';
+        cacheBadge.textContent = '⚠️ Cache Invalidated';
+      } else {
+        cacheBadge.style.display = 'none';
+      }
+    }
+
     const conf = Math.round((plan.confidence || 0.9) * 100);
     confidenceBadge.textContent = `${conf}% Conf`;
     sourceBadge.textContent = (plan.source || 'DOM').toUpperCase();
@@ -353,11 +368,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Add Proof-of-Perception Evidence Card
+  // Add Proof-of-Perception Evidence Card (Task 153: lazy loading)
   function addEvidenceCard(evidence) {
     if (!evidence) return;
 
-    // Remove placeholder
     const placeholder = evidenceContainer.querySelector('.placeholder-text');
     if (placeholder) placeholder.remove();
 
@@ -369,7 +383,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const src = evidence.vision_crop_base64.startsWith('data:')
         ? evidence.vision_crop_base64
         : `data:image/png;base64,${evidence.vision_crop_base64}`;
-      cropHtml = `<img src="${src}" class="evidence-thumb" title="Click to zoom crop" />`;
+      cropHtml = `<img src="${src}" class="evidence-thumb" loading="lazy" title="Click to zoom crop" />`;
     }
 
     const shortHash = evidence.hash ? evidence.hash.substring(0, 10) + '...' : 'hash-chain';
@@ -385,7 +399,6 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    // Zoom listener for crop thumbnail
     const thumbImg = card.querySelector('.evidence-thumb');
     if (thumbImg) {
       thumbImg.addEventListener('click', () => {
@@ -396,6 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     evidenceContainer.prepend(card);
   }
+
 
   // Safety Confirmation Modal
   function showConfirmationModal(payload, id) {
