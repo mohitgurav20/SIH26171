@@ -235,6 +235,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function handleToggleMic() {
     if (!isRecording) {
+      // Check if one-time permission has been granted
+      const stored = await chrome.storage.local.get('mic_permission_granted');
+      if (!stored.mic_permission_granted) {
+        chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
+        reasoningBox.innerHTML = `<em>Please click <strong>"Allow Microphone Access"</strong> in the opened tab to enable voice.</em>`;
+        return;
+      }
+
       isRecording = true;
       micBtn.classList.add('recording');
       voiceRecordingBar.classList.remove('hidden');
@@ -250,6 +258,7 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
         if (res && res.error) {
           console.error('Recording error:', res.error);
+          chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
         }
       });
 
@@ -271,7 +280,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (capturedText && !capturedText.startsWith('Listening')) {
         reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
       } else {
-        reasoningBox.innerHTML = `<em>Audio captured. Ready to run.</em>`;
+        reasoningBox.innerHTML = `<em>Audio captured. Transcribing on-device...</em>`;
       }
 
       updateStatus('online', 'Agent Ready');
