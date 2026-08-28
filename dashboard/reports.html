@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ISRO Mission Control — Sensor Payloads & Subsystems</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="isro-logo-dot"></span>
+        <h2>ISRO MOS</h2>
+      </div>
+      <nav>
+        <a href="index.html" class="nav-item" id="nav-telemetry">🛰️ Satellite Telemetry</a>
+        <a href="reports.html" class="nav-item active" id="nav-payloads">📡 Sensor Payloads</a>
+        <a href="index.html#canvas-view" class="nav-item" id="nav-orbit">🌍 Orbital Visualizer</a>
+        <a href="#audit-log-view" class="nav-item" id="nav-audit">🔒 Security Audit</a>
+      </nav>
+      <div class="sidebar-footer">
+        <a href="login.html" id="btn-logout" class="btn-logout">Logout</a>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <h1>Sensor Payloads & Subsystem Diagnostics</h1>
+          <p class="subtitle" style="margin-top: 4px;">Mission Payload Telemetry — High-Precision Optical, SAR & Particle Spectrometers</p>
+        </div>
+        <div class="actions">
+          <a href="index.html" class="btn-secondary" style="text-decoration:none; display:inline-flex; align-items:center; font-size:13px; padding:8px 16px;">⬅ Back to Telemetry</a>
+          <button id="btn-run-diagnostics" class="btn-primary">🔬 Run Fleet Diagnostics</button>
+          <button id="btn-purge-logs" class="btn-danger">⚠️ Purge Telemetry Buffer</button>
+        </div>
+      </header>
+
+      <!-- KPI Summary Cards -->
+      <section class="kpi-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+        <div class="kpi-card" style="background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+          <div style="font-size: 12px; color: var(--text-muted);">Active Payloads</div>
+          <div style="font-size: 22px; font-weight: 700; color: var(--primary); margin-top: 6px;" id="kpi-active">18 / 20</div>
+          <div style="font-size: 11px; color: var(--success); margin-top: 4px;">90% nominal operational state</div>
+        </div>
+        <div class="kpi-card" style="background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+          <div style="font-size: 12px; color: var(--text-muted);">Downlink Bandwidth</div>
+          <div style="font-size: 22px; font-weight: 700; color: var(--text-main); margin-top: 6px;">820 Mbps</div>
+          <div style="font-size: 11px; color: var(--primary); margin-top: 4px;">X-band & Ka-band carrier active</div>
+        </div>
+        <div class="kpi-card" style="background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+          <div style="font-size: 12px; color: var(--text-muted);">Calibration Queue</div>
+          <div style="font-size: 22px; font-weight: 700; color: var(--warning); margin-top: 6px;" id="kpi-queue">2 Pending</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Cartosat-3A & AstroSat-UVIT</div>
+        </div>
+        <div class="kpi-card" style="background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+          <div style="font-size: 12px; color: var(--text-muted);">Cryptographic Integrity</div>
+          <div style="font-size: 22px; font-weight: 700; color: var(--success); margin-top: 6px;">AES-256 / GCM</div>
+          <div style="font-size: 11px; color: var(--success); margin-top: 4px;">SHA-256 Hash Chain Verified</div>
+        </div>
+      </section>
+
+      <!-- Filter Bar -->
+      <section class="filter-bar">
+        <input type="text" id="sensor-search" placeholder="Filter payload instrument, band, or spacecraft..." />
+        <select id="band-filter">
+          <option value="ALL">All Optical / RF Bands</option>
+          <option value="PANCHROMATIC">Panchromatic (0.28m)</option>
+          <option value="C-BAND">C-Band SAR (5.4 GHz)</option>
+          <option value="UV-NUV">Near UV / Far UV</option>
+          <option value="X-RAY">X-Ray Polarimetry</option>
+        </select>
+        <button id="btn-filter-sensors" class="btn-primary">Filter Sensors</button>
+      </section>
+
+      <!-- Detailed Sensor Payloads Table -->
+      <section class="table-section">
+        <table id="sensors-table">
+          <thead>
+            <tr>
+              <th>Sensor ID</th>
+              <th>Instrument</th>
+              <th>Host Spacecraft</th>
+              <th>Band / Mode</th>
+              <th>Gain Setting</th>
+              <th>Temperature (K)</th>
+              <th>Status</th>
+              <th>Operations</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>SNS-010</td>
+              <td>Panchromatic Camera (PAN-3)</td>
+              <td>Cartosat-3A</td>
+              <td>Visible (0.28m GSD)</td>
+              <td>Gain 1.0x (Standard)</td>
+              <td>288.2</td>
+              <td><span class="badge badge-success">ONLINE</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="PAN-3">Calibrate Gain</button></td>
+            </tr>
+            <tr>
+              <td>SNS-011</td>
+              <td>Multispectral High-Res (MX-4)</td>
+              <td>Cartosat-3A</td>
+              <td>4-Band VNIR</td>
+              <td>Gain 1.2x (High)</td>
+              <td>290.5</td>
+              <td><span class="badge badge-success">ONLINE</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="MX-4">Calibrate Gain</button></td>
+            </tr>
+            <tr>
+              <td>SNS-020</td>
+              <td>Synthetic Aperture Radar (SAR-C)</td>
+              <td>EOS-04</td>
+              <td>C-Band (FRS-1)</td>
+              <td>Gain 0.9x</td>
+              <td>294.0</td>
+              <td><span class="badge badge-success">ONLINE</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="SAR-C">Calibrate Gain</button></td>
+            </tr>
+            <tr>
+              <td>SNS-030</td>
+              <td>Ocean Color Monitor (OCM-3)</td>
+              <td>Oceansat-3</td>
+              <td>13 VNIR Bands</td>
+              <td>Gain 1.0x</td>
+              <td>292.8</td>
+              <td><span class="badge badge-success">ONLINE</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="OCM-3">Calibrate Gain</button></td>
+            </tr>
+            <tr>
+              <td>SNS-040</td>
+              <td>STEPS Particle Spectrometer</td>
+              <td>Aditya-L1</td>
+              <td>Solar Energetic Ions</td>
+              <td>High-Flux Mode</td>
+              <td>285.0</td>
+              <td><span class="badge badge-warning">CALIBRATING</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="STEPS">Calibrate Gain</button></td>
+            </tr>
+            <tr>
+              <td>SNS-070</td>
+              <td>Ultra-Violet Imaging Telescope (UVIT)</td>
+              <td>AstroSat</td>
+              <td>Far-UV & NUV</td>
+              <td>Gain 1.5x (Boost)</td>
+              <td>281.4</td>
+              <td><span class="badge badge-danger">ALERT</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="UVIT">Calibrate Gain</button></td>
+            </tr>
+            <tr>
+              <td>SNS-080</td>
+              <td>POLIX Polarimeter Instrument</td>
+              <td>XPoSat</td>
+              <td>8-30 keV X-Ray</td>
+              <td>Nominal Mode</td>
+              <td>289.1</td>
+              <td><span class="badge badge-success">ONLINE</span></td>
+              <td><button class="btn-action btn-calibrate-sensor" data-sensor="POLIX">Calibrate Gain</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Spectra Canvas Section (Task #35 visual perception testbed) -->
+      <section class="canvas-section">
+        <h2>📊 Real-time Sensor Spectrum Analyzer (Canvas Non-DOM Spectral Bands)</h2>
+        <p class="desc">Rendered dynamically via HTML5 Canvas. Spectral energy channels and peak wavelengths are visual-only pixels.</p>
+        <canvas id="spectra-canvas" width="800" height="220"></canvas>
+      </section>
+
+      <!-- Subsystem Calibration Panel (Multi-Action Form) -->
+      <section class="table-section" style="padding: 20px;">
+        <h3 style="margin-bottom: 12px; font-size: 15px;">🛠️ Payload Calibration & Gain Control</h3>
+        <form id="calibration-form" style="display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 12px; align-items: flex-end;">
+          <div class="form-group" style="margin-bottom: 0;">
+            <label for="target-instrument">Target Instrument</label>
+            <select id="target-instrument">
+              <option value="PAN-3">Cartosat-3A (PAN-3)</option>
+              <option value="MX-4">Cartosat-3A (MX-4)</option>
+              <option value="SAR-C">EOS-04 (SAR-C)</option>
+              <option value="UVIT">AstroSat (UVIT)</option>
+              <option value="STEPS">Aditya-L1 (STEPS)</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label for="gain-multiplier">Gain Setting</label>
+            <select id="gain-multiplier">
+              <option value="0.8x">0.8x (Low Sensitivity)</option>
+              <option value="1.0x" selected>1.0x (Standard)</option>
+              <option value="1.2x">1.2x (Enhanced)</option>
+              <option value="1.5x">1.5x (Maximum Boost)</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label for="integration-time">Integration Time (ms)</label>
+            <input type="number" id="integration-time" value="25" min="5" max="100" />
+          </div>
+          <button type="button" id="btn-submit-calibration" class="btn-primary" style="height: 38px;">Apply Calibration</button>
+        </form>
+        <div id="calibration-status-message" style="margin-top: 10px; font-size: 12px; color: var(--success); display: none;"></div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // Calibrate button click handler
+      document.querySelectorAll('.btn-calibrate-sensor').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const sensor = e.target.getAttribute('data-sensor');
+          const select = document.getElementById('target-instrument');
+          if (select) {
+            select.value = sensor;
+          }
+          const msg = document.getElementById('calibration-status-message');
+          msg.textContent = `Selected instrument ${sensor} in calibration console. Ready to apply.`;
+          msg.style.display = 'block';
+        });
+      });
+
+      // Submit calibration form
+      const submitBtn = document.getElementById('btn-submit-calibration');
+      if (submitBtn) {
+        submitBtn.addEventListener('click', () => {
+          const instrument = document.getElementById('target-instrument').value;
+          const gain = document.getElementById('gain-multiplier').value;
+          const intTime = document.getElementById('integration-time').value;
+          const msg = document.getElementById('calibration-status-message');
+          msg.textContent = `✓ Successfully applied ${gain} gain & ${intTime}ms integration time to ${instrument}.`;
+          msg.style.display = 'block';
+        });
+      }
+
+      // Filter sensors table
+      const filterBtn = document.getElementById('btn-filter-sensors');
+      if (filterBtn) {
+        filterBtn.addEventListener('click', () => {
+          const query = document.getElementById('sensor-search').value.toLowerCase();
+          const rows = document.querySelectorAll('#sensors-table tbody tr');
+          rows.forEach(r => {
+            const match = r.textContent.toLowerCase().includes(query);
+            r.style.display = match ? '' : 'none';
+          });
+        });
+      }
+
+      // Purge buffer critical guardrail
+      const purgeBtn = document.getElementById('btn-purge-logs');
+      if (purgeBtn) {
+        purgeBtn.addEventListener('click', () => {
+          const proceed = confirm('CRITICAL WARNING: Purging telemetry buffer will erase in-flight sensor buffers. Proceed?');
+          if (proceed) {
+            alert('Telemetry buffer purged.');
+          }
+        });
+      }
+
+      // Canvas Spectra Simulator (Visual-only rendering)
+      const canvas = document.getElementById('spectra-canvas');
+      if (canvas) {
+        const ctx = canvas.getContext('2d');
+        const bands = [
+          { name: 'FUV (130-180nm)', val: 65, color: '#9333ea' },
+          { name: 'NUV (200-300nm)', val: 82, color: '#3b82f6' },
+          { name: 'BLUE (450-520nm)', val: 110, color: '#00d4ff' },
+          { name: 'GREEN (520-590nm)', val: 145, color: '#00ff88' },
+          { name: 'RED (630-690nm)', val: 130, color: '#ffbb00' },
+          { name: 'NIR (770-890nm)', val: 160, color: '#ff8800' },
+          { name: 'SWIR (1.55-1.75um)', val: 95, color: '#ff3366' },
+        ];
+
+        function renderSpectra() {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          // Grid lines
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+          ctx.lineWidth = 1;
+          for (let y = 20; y < canvas.height - 30; y += 30) {
+            ctx.beginPath();
+            ctx.moveTo(40, y);
+            ctx.lineTo(canvas.width - 20, y);
+            ctx.stroke();
+          }
+
+          const barWidth = 70;
+          const startX = 60;
+          const gap = 32;
+
+          bands.forEach((b, idx) => {
+            const x = startX + idx * (barWidth + gap);
+            const height = b.val + Math.sin(Date.now() * 0.003 + idx) * 8;
+            const y = canvas.height - 35 - height;
+
+            // Bar fill
+            const grad = ctx.createLinearGradient(x, y, x, canvas.height - 35);
+            grad.addColorStop(0, b.color);
+            grad.addColorStop(1, 'rgba(0,0,0,0.2)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y, barWidth, height);
+
+            // Outline
+            ctx.strokeStyle = b.color;
+            ctx.strokeRect(x, y, barWidth, height);
+
+            // Non-DOM Canvas text for visual perception testing
+            ctx.fillStyle = '#e2e8f0';
+            ctx.font = '10px Segoe UI';
+            ctx.fillText(b.name, x - 5, canvas.height - 15);
+
+            ctx.fillStyle = b.color;
+            ctx.font = 'bold 11px Segoe UI';
+            ctx.fillText(`${Math.round(height)} uW`, x + 12, y - 6);
+          });
+
+          requestAnimationFrame(renderSpectra);
+        }
+
+        renderSpectra();
+      }
+    });
+  </script>
+</body>
+</html>
