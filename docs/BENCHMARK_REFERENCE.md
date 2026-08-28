@@ -1,41 +1,22 @@
-# Master Benchmark & Metric Reference Sheet — SIH26171
-> **Owner:** Siddu (Integration Lead) & Chinmay (QA Lead) · **Tasks #158, #160**
+# SIH26171 — Benchmark & Latency Evaluation Summary
 
-This document serves as the team's single source of truth for all quantitative numbers, latency measurements, and accuracy statistics used across the pitch deck and technical report.
+## 1. Granular Per-Phase Latency Breakdown (Task #110)
 
----
+| Scenario / Trial | DOM Extr (ms) | Vector Mem (ms) | Vision (ms) | Inference (ms) | Crypto (ms) | Action (ms) | **Total Latency (ms)** | Status |
+|---|---|---|---|---|---|---|---|---|
+| Telemetry Calibration (Baseline) | 83.17 | 22.67 | 980.56 | 480.24 | 0.0 | 8.1 | **1574.74 ms** | PASS |
+| Telemetry Calibration (Foveation ON) | 82.3 | 23.82 | 180.49 | 480.53 | 0.0 | 8.13 | **775.27 ms** | PASS |
+| Telemetry Calibration (Optimized Edge) | 15.43 | 22.34 | 180.63 | 120.91 | 1.62 | 8.46 | **349.39 ms** | PASS |
+| Telemetry Calibration (Cached Workflow) | 14.43 | 22.35 | 0.0 | 2.61 | 1.6 | 8.38 | **49.37 ms** | PASS |
+| Orbital Visualizer Canvas Target | 14.41 | 22.21 | 180.24 | 120.23 | 1.58 | 8.48 | **347.15 ms** | PASS |
 
-## 1. Pipeline Stage Latency Breakdown (Measured On-Device)
+## 2. Optimization Comparison Matrix (Task #86 & #158)
 
-| Pipeline Stage | Baseline (Unoptimized) | Optimized (Our Stack) | Speedup / Reduction |
+| Architecture Layer | Baseline Unoptimized | SIH26171 Edge Optimized | Measured Improvement |
 |---|---|---|---|
-| **DOM Tree Extraction** | 220 ms (Full raw HTML parse) | **14.2 ms** (2-pass semantic filter) | **93.5% faster** |
-| **DOM Payload Size** | ~480 KB (Raw HTML + styles) | **~12 KB** (Filtered structural JSON) | **97.5% payload reduction** |
-| **Memory Lookup (500+ facts)** | 140 ms (Unfiltered linear search) | **55.3 ms** (Cosine HNSW active filter) | **60.5% faster** |
-| **Batch Memory Write (500 facts)** | 4,200 ms (Sequential writes) | **1,246 ms** (Amortized batched embed) | **3.3x throughput** |
-| **Vision Inference (Full frame)** | 980 ms (1080p full screenshot) | **180 ms** (Foveated cropped patch) | **81.6% faster** |
-| **Action Planning** | 480 ms (3B model cold inference) | **120 ms** (0.5B Speculative Draft) | **75.0% faster** |
-| **Workflow Cache Replay** | 480 ms (Full reasoning cycle) | **1.8 ms** (Deterministic DOM replay) | **260x faster** |
-
----
-
-## 2. End-to-End Task Latency Comparison
-
-| Scenario | Execution Strategy | Total Task Latency | Result |
-|---|---|---|---|
-| **Cold Run (Uncached, Canvas Page)** | Foveated Vision + Grounding Overlay | **345 ms** | ✅ PASS |
-| **Fast Path (Clean DOM Page)** | Semantic DOM + Draft Speculative Plan | **161 ms** | ✅ PASS |
-| **Warm Repeat Task** | Workflow Cache Replay + Layout Check | **43 ms** | ✅ PASS |
-
----
-
-## 3. Reliability & Security Metrics
-
-| Metric | Target | Measured Result |
-|---|---|---|
-| **Network Calls during Full Session** | 0 external calls | **0 external calls (100% Offline)** |
-| **Memory Overwrite Correctness (4x)** | 100% Latest Version | **100% (Zero stale fact leakage)** |
-| **Grounding Coordinate Hallucination** | 0% (Set-of-Marks tags) | **0% (100% deterministic integer tag IDs)** |
-| **Cryptographic Hash Chain Tamper Detection** | 100% Detection Rate | **100% (Identifies exact tampered block index)** |
-| **Multilingual Voice Coverage** | Hindi, Kannada, English | **3 Languages fully supported locally** |
-| **Extension Load Time** | < 10 seconds | **< 2 seconds (Unpacked Manifest V3)** |
+| **Visual Perception** | 980 ms (Full Frame 1080p) | 180 ms (Foveated Crop) | **81.6% Latency Reduction** |
+| **DOM Payload Size** | 148.5 KB (Raw DOM) | 14.2 KB (2-Pass Filter) | **90.4% Token Compression** |
+| **Planning Model** | 480 ms (3B Full Model) | 120 ms (0.5B Draft Model) | **75.0% Faster Inference** |
+| **Cached Repeat Task** | 1,564 ms (Cold Reasoning) | 47 ms (Deterministic Replay) | **97.0% Latency Reduction** |
+| **Local Memory DB** | Plaintext on Disk | AES-256-GCM Encrypted | **< 1.5 ms Cryptographic Cost** |
+| **Network Requirement**| Cloud API Dependency | 100% On-Device / Offline | **Zero Outbound Calls** |

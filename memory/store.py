@@ -6,13 +6,15 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from .collections import MemoryCollectionName, MemoryCollections
 from .embeddings import LocalEmbeddingWrapper
+from .crypto import EncryptedLocalMemoryDB
 
 class VersionedMemoryStore:
     """
-    Self-built Versioned Memory System (Tasks #2, #6, #21, #22, #41, #88, #101, #102, #113, #114, #115, #150).
+    Self-built Versioned Memory System (Tasks #2, #6, #21, #22, #41, #68, #88, #101, #102, #113, #114, #115, #150).
     Features:
     - 4 Chroma collections: session_memory, user_preferences, site_knowledge, task_history
     - Explicit versioning (v1 -> v2 -> v3) with superseded marking so old facts never survive updates
+    - Local AES-256-GCM / PBKDF2 Encrypted Storage (Task #68)
     - Parallel multi-collection retrieval (Task #101)
     - Batched embedding writes (Task #102)
     - Similarity score thresholding (Task #114)
@@ -20,10 +22,12 @@ class VersionedMemoryStore:
     - Pure offline fallback engine when ChromaDB C++ bindings are not present
     """
 
-    def __init__(self, persist_directory: str = "./memory/chroma_data"):
+    def __init__(self, persist_directory: str = "./memory/chroma_data", encryption_key: Optional[str] = None, enable_encryption: bool = True):
         self.persist_directory = persist_directory
         os.makedirs(persist_directory, exist_ok=True)
         self.embedder = LocalEmbeddingWrapper()
+        self.enable_encryption = enable_encryption
+        self.crypto = EncryptedLocalMemoryDB(key_passphrase=encryption_key)
         self._use_chroma = False
 
         try:
@@ -51,22 +55,40 @@ class VersionedMemoryStore:
             )
 
     def _init_fallback_storage(self):
-        """Fallback memory storage engine for offline resilience."""
-        self.fallback_file = os.path.join(self.persist_directory, "versioned_memory.json")
+        """Fallback memory storage engine with local cryptographic protection for offline resilience."""
+        self.fallback_file_enc = os.path.join(self.persist_directory, "versioned_memory.enc")
+        self.fallback_file_json = os.path.join(self.persist_directory, "versioned_memory.json")
         self.storage: Dict[str, List[Dict[str, Any]]] = {
             col.value: [] for col in MemoryCollectionName
         }
-        if os.path.exists(self.fallback_file):
+
+        # 1. Try loading encrypted vault first
+        if os.path.exists(self.fallback_file_enc):
             try:
-                with open(self.fallback_file, "r", encoding="utf-8") as f:
+                with open(self.fallback_file_enc, "rb") as f:
+                    encrypted_data = f.read()
+                self.storage = self.crypto.decrypt_json(encrypted_data)
+                return
+            except Exception as e:
+                logging.error(f"Error decrypting versioned memory vault: {e}")
+
+        # 2. Fallback to unencrypted JSON if legacy exists
+        if os.path.exists(self.fallback_file_json):
+            try:
+                with open(self.fallback_file_json, "r", encoding="utf-8") as f:
                     self.storage = json.load(f)
             except Exception as e:
-                logging.error(f"Error loading fallback memory: {e}")
+                logging.error(f"Error loading legacy fallback memory: {e}")
 
     def _save_fallback_storage(self):
         if not self._use_chroma:
-            with open(self.fallback_file, "w", encoding="utf-8") as f:
-                json.dump(self.storage, f, indent=2)
+            if self.enable_encryption:
+                encrypted_payload = self.crypto.encrypt_json(self.storage)
+                with open(self.fallback_file_enc, "wb") as f:
+                    f.write(encrypted_payload)
+            else:
+                with open(self.fallback_file_json, "w", encoding="utf-8") as f:
+                    json.dump(self.storage, f, indent=2)
 
     def store_memory(
         self,

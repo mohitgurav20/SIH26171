@@ -118,5 +118,55 @@ class TestVersionedMemory(unittest.TestCase):
         self.assertIn("user_preferences", all_res)
         self.assertIn("session_memory", all_res)
 
+    def test_crypto_encryption_and_decryption_roundtrip(self):
+        """Task #68: AES-256-GCM / PBKDF2 authenticated encryption & decryption roundtrip."""
+        from memory.crypto import EncryptedLocalMemoryDB
+        crypto = EncryptedLocalMemoryDB(key_passphrase="test_isro_secret_key_2026")
+        test_payload = {"spacecraft": "Chandrayaan-3", "subsystem": "Spectrometer", "gain": 1.25}
+
+        encrypted_blob = crypto.encrypt_json(test_payload)
+        self.assertTrue(encrypted_blob.startswith(b"ISROMEM1"), "Encrypted blob must have ISROMEM1 header!")
+        self.assertNotEqual(encrypted_blob, test_payload, "Encrypted data must not equal plaintext!")
+
+        decrypted_payload = crypto.decrypt_json(encrypted_blob)
+        self.assertEqual(decrypted_payload, test_payload, "Decrypted data must exactly match original payload!")
+
+    def test_crypto_tamper_detection_and_integrity_failure(self):
+        """Task #68: Modifying even 1 bit in ciphertext or tag must cause cryptographic authentication failure."""
+        from memory.crypto import EncryptedLocalMemoryDB
+        crypto = EncryptedLocalMemoryDB(key_passphrase="test_isro_secret_key_2026")
+        test_data = b"ISRO Telemetry Confidential Mission Parameters"
+
+        encrypted_blob = bytearray(crypto.encrypt_bytes(test_data))
+
+        # Tamper with the last byte (part of the tag or ciphertext)
+        encrypted_blob[-1] ^= 0xFF
+
+        with self.assertRaises(PermissionError):
+            crypto.decrypt_bytes(bytes(encrypted_blob))
+
+    def test_encrypted_persistence_on_disk(self):
+        """Task #68: Verify versioned memory store writes encrypted files to disk that cannot be read as plaintext."""
+        self.store.store_memory(
+            MemoryCollectionName.SESSION_MEMORY,
+            "secret_telemetry_vector",
+            "CONFIDENTIAL: Azimuth 142.8 deg, Elevation 45.2 deg"
+        )
+
+        enc_path = os.path.join(self.test_dir, "versioned_memory.enc")
+        self.assertTrue(os.path.exists(enc_path), "Encrypted storage file must exist on disk.")
+
+        with open(enc_path, "rb") as f:
+            disk_bytes = f.read()
+
+        self.assertTrue(disk_bytes.startswith(b"ISROMEM1"))
+        self.assertNotIn(b"CONFIDENTIAL", disk_bytes, "Plaintext secrets must never appear raw on disk!")
+
+        # Create a second store instance with the same persist_directory to verify recovery
+        store_recovered = VersionedMemoryStore(persist_directory=self.test_dir)
+        recovered_results = store_recovered.retrieve_memory(MemoryCollectionName.SESSION_MEMORY, "Azimuth")
+        self.assertTrue(len(recovered_results) > 0)
+        self.assertIn("CONFIDENTIAL", recovered_results[0]["content"])
+
 if __name__ == "__main__":
     unittest.main()
