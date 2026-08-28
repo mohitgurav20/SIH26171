@@ -24,12 +24,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true; // Keep channel open for async
 
     case 'start_audio_recording':
+    case 'start_mic_recording':
       startAudioRecording()
         .then(() => sendResponse({ success: true, status: 'recording' }))
         .catch(err => sendResponse({ success: false, error: err.message }));
       return true;
 
     case 'stop_audio_recording':
+    case 'stop_mic_recording':
       stopAudioRecording()
         .then(result => sendResponse({ success: true, ...result }))
         .catch(err => sendResponse({ success: false, error: err.message }));

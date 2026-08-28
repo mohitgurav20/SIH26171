@@ -210,6 +210,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true;
 
+    case 'start_recording':
+      ensureOffscreenDocument().then(() => {
+        chrome.runtime.sendMessage({
+          target: 'offscreen',
+          type: 'start_mic_recording'
+        }, (res) => {
+          sendResponse(res || { status: 'recording' });
+        });
+      }).catch((err) => {
+        sendResponse({ error: err.message });
+      });
+      return true;
+
+    case 'stop_recording':
+      chrome.runtime.sendMessage({
+        target: 'offscreen',
+        type: 'stop_mic_recording'
+      }, (audioResult) => {
+        if (audioResult && audioResult.audio_base64) {
+          // Forward captured audio to native host for ASR transcription
+          forwardToNativeHost({
+            type: 'audio',
+            id: `audio-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            payload: {
+              audio_base64: audioResult.audio_base64,
+              sample_rate: 16000,
+              language_hint: 'auto'
+            }
+          });
+        }
+        sendResponse({ status: 'stopped' });
+      });
+      return true;
+
     case 'toggle_overlays':
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {

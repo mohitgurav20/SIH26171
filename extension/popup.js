@@ -198,93 +198,41 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStatus('thinking', 'Planning actions for command...');
   }
 
-  // Voice Mic Toggle
+  // Voice Mic Toggle — Delegates to background/offscreen for MV3 mic access
   async function handleToggleMic() {
     if (!isRecording) {
-      try {
-        await startRecording();
-      } catch (err) {
-        console.error('Failed to start recording:', err);
-        alert('Could not access microphone: ' + err.message);
-      }
+      // Tell background service worker to start recording via offscreen document
+      chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
+        if (res && res.error) {
+          console.error('Recording failed:', res.error);
+          reasoningBox.innerHTML = `<em style="color:#ef4444;">Mic Error: ${res.error}</em>`;
+          return;
+        }
+      });
+
+      isRecording = true;
+      micBtn.classList.add('recording');
+      voiceRecordingBar.classList.remove('hidden');
+      recordingStartTime = Date.now();
+
+      recordingInterval = setInterval(() => {
+        const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
+        const min = Math.floor(elapsedSec / 60);
+        const sec = elapsedSec % 60;
+        recordingTimer.textContent = `Listening & Auto-Detecting... ${min}:${sec < 10 ? '0' : ''}${sec}`;
+      }, 500);
     } else {
-      await stopAndSendRecording();
+      // Tell background to stop recording — it will send back the audio
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      voiceRecordingBar.classList.add('hidden');
+      clearInterval(recordingInterval);
+
+      reasoningBox.innerHTML = `<em>Transcribing voice (Auto-Detect: Hindi / Kannada / English)...</em>`;
+      updateStatus('thinking', 'Transcribing audio on-device...');
+
+      chrome.runtime.sendMessage({ type: 'stop_recording' });
     }
-  }
-
-  async function startRecording() {
-    recordedPCMChunks = [];
-    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-    mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
-
-    audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-    audioProcessor.onaudioprocess = (e) => {
-      const channelData = e.inputBuffer.getChannelData(0);
-      recordedPCMChunks.push(new Float32Array(channelData));
-    };
-
-    mediaStreamSource.connect(audioProcessor);
-    audioProcessor.connect(audioContext.destination);
-
-    isRecording = true;
-    micBtn.classList.add('recording');
-    voiceRecordingBar.classList.remove('hidden');
-    recordingStartTime = Date.now();
-
-    recordingInterval = setInterval(() => {
-      const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
-      const min = Math.floor(elapsedSec / 60);
-      const sec = elapsedSec % 60;
-      recordingTimer.textContent = `Recording 16kHz audio... ${min}:${sec < 10 ? '0' : ''}${sec}`;
-    }, 500);
-  }
-
-  async function stopAndSendRecording() {
-    isRecording = false;
-    micBtn.classList.remove('recording');
-    voiceRecordingBar.classList.add('hidden');
-    clearInterval(recordingInterval);
-
-    if (audioProcessor && mediaStreamSource) {
-      mediaStreamSource.disconnect();
-      audioProcessor.disconnect();
-    }
-    if (audioStream) {
-      audioStream.getTracks().forEach(track => track.stop());
-    }
-    if (audioContext && audioContext.state !== 'closed') {
-      await audioContext.close();
-    }
-
-    // Merge PCM chunks
-    let totalLen = 0;
-    for (const chunk of recordedPCMChunks) totalLen += chunk.length;
-    const mergedPCM = new Float32Array(totalLen);
-    let offset = 0;
-    for (const chunk of recordedPCMChunks) {
-      mergedPCM.set(chunk, offset);
-      offset += chunk.length;
-    }
-
-    // Encode to 16kHz WAV
-    const wavBuffer = encodeWAV(mergedPCM, 16000);
-    const audioBase64 = bufferToBase64(wavBuffer);
-    const lang = 'auto'; // Automatic Speech Recognition detects Hindi, Kannada, or English automatically
-
-    reasoningBox.innerHTML = `<em>Transcribing voice audio (${(totalLen / 16000).toFixed(1)}s)...</em>`;
-    updateStatus('thinking', 'Transcribing audio on-device...');
-
-    chrome.runtime.sendMessage({
-      type: 'audio',
-      id: `audio-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      payload: {
-        audio_base64: audioBase64,
-        sample_rate: 16000,
-        language_hint: lang
-      }
-    });
   }
 
   // Render Action Plan
