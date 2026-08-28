@@ -5,8 +5,7 @@
 
 :root {
   --white: #ffffff;
-  --bg-soft: #fff7f9;
-  --bg-canvas: #faf8f9;
+  --bg-gradient: linear-gradient(180deg, #fff0f3 0%, #fde2e8 100%);
   --card-bg: #ffffff;
   
   --pink-50: #fff1f2;
@@ -16,16 +15,16 @@
   --pink-400: #fb7185;
   --pink-500: #f43f5e;
   --pink-600: #e11d48;
-  --pink-glow: rgba(244, 63, 94, 0.22);
-  --pink-subtle: rgba(244, 63, 94, 0.08);
+  --pink-glow: rgba(244, 63, 94, 0.25);
+  --pink-subtle: rgba(244, 63, 94, 0.10);
 
   --text-main: #1f2937;
   --text-muted: #6b7280;
   --text-light: #9ca3af;
 
-  --border-soft: #fce7f3;
-  --border-card: #f3e8ff;
-  --border-subtle: #f0edf0;
+  --border-soft: #fbcfe8;
+  --border-card: #fecdd3;
+  --border-subtle: #f9a8d4;
 
   --success-bg: #ecfdf5;
   --success-text: #059669;
@@ -48,8 +47,9 @@ body {
   min-height: 520px;
   max-height: 600px;
   font-family: var(--font-family);
-  background: var(--bg-soft);
+  background: var(--bg-gradient);
   color: var(--text-main);
+  border: 1px solid #fecdd3;
   overflow-x: hidden;
   overflow-y: auto;
   -webkit-font-smoothing: antialiased;
@@ -57,7 +57,7 @@ body {
 
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--pink-200); border-radius: 10px; }
+::-webkit-scrollbar-thumb { background: var(--pink-300); border-radius: 10px; }
 
 .app-container {
   display: flex;
