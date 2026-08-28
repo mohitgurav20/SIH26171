@@ -1,0 +1,372 @@
+{
+  "runs": [
+    {
+      "benchmark": "draft_latency",
+      "at": "2026-08-28T12:00:50+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "draft": {
+          "n": 6,
+          "mean_ms": 138.47,
+          "median_ms": 138.39,
+          "p90_ms": 139.41,
+          "min_ms": 137.6,
+          "max_ms": 139.41,
+          "stdev_ms": 0.65
+        },
+        "full_text": {
+          "n": 6,
+          "mean_ms": 1016.2,
+          "median_ms": 1016.1,
+          "p90_ms": 1016.86,
+          "min_ms": 1015.79,
+          "max_ms": 1016.86,
+          "stdev_ms": 0.42
+        },
+        "draft_stats": {
+          "attempts": 6,
+          "accepted": 6,
+          "acceptance_rate": 1.0,
+          "mean_draft_ms": 138.47,
+          "escalations": {}
+        },
+        "economics": {
+          "acceptance_rate": 1.0,
+          "mean_ms_with_draft": 138.47,
+          "mean_ms_without_draft": 1016.2,
+          "saved_ms_per_action": 877.72,
+          "breakeven_acceptance_rate": 0.1363,
+          "worth_keeping": true
+        }
+      }
+    },
+    {
+      "benchmark": "warm_keeping",
+      "at": "2026-08-28T12:00:51+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "cold_first_call_ms": 137.83,
+        "warm": {
+          "n": 5,
+          "mean_ms": 138.16,
+          "median_ms": 138.11,
+          "p90_ms": 138.72,
+          "min_ms": 137.65,
+          "max_ms": 138.72,
+          "stdev_ms": 0.38
+        },
+        "load_cost_ms": -0.32,
+        "keep_alive": "30m"
+      }
+    },
+    {
+      "benchmark": "kv_cache",
+      "at": "2026-08-28T12:01:03+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "shared_prefix_ttft": {
+          "n": 6,
+          "mean_ms": 112.91,
+          "median_ms": 112.92,
+          "p90_ms": 112.99,
+          "min_ms": 112.82,
+          "max_ms": 112.99,
+          "stdev_ms": 0.07
+        },
+        "changing_prefix_ttft": {
+          "n": 6,
+          "mean_ms": 112.97,
+          "median_ms": 112.98,
+          "p90_ms": 113.11,
+          "min_ms": 112.75,
+          "max_ms": 113.11,
+          "stdev_ms": 0.13
+        },
+        "first_call_ttft_ms": 112.92,
+        "later_calls_ttft": {
+          "n": 5,
+          "mean_ms": 112.9,
+          "median_ms": 112.91,
+          "p90_ms": 112.99,
+          "min_ms": 112.82,
+          "max_ms": 112.99,
+          "stdev_ms": 0.08
+        },
+        "cache_benefit_ms": 0.02
+      }
+    },
+    {
+      "benchmark": "streaming",
+      "at": "2026-08-28T12:01:09+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "head_start": {
+          "n": 6,
+          "mean_ms": 677.7,
+          "median_ms": 677.72,
+          "p90_ms": 679.01,
+          "min_ms": 676.86,
+          "max_ms": 679.01,
+          "stdev_ms": 0.76
+        },
+        "full_response": {
+          "n": 6,
+          "mean_ms": 1016.76,
+          "median_ms": 1016.91,
+          "p90_ms": 1017.84,
+          "min_ms": 1015.44,
+          "max_ms": 1017.84,
+          "stdev_ms": 0.8
+        },
+        "fraction_of_response_hidden": 0.6665
+      }
+    },
+    {
+      "benchmark": "warm_swap",
+      "at": "2026-08-28T12:01:31+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "vision_first_call_without_prewarm": {
+          "n": 6,
+          "mean_ms": 1812.48,
+          "median_ms": 1579.11,
+          "p90_ms": 2980.68,
+          "min_ms": 1577.54,
+          "max_ms": 2980.68,
+          "stdev_ms": 572.3
+        },
+        "vision_first_call_with_prewarm": {
+          "n": 6,
+          "mean_ms": 1579.31,
+          "median_ms": 1578.43,
+          "p90_ms": 1583.35,
+          "min_ms": 1578.12,
+          "max_ms": 1583.35,
+          "stdev_ms": 2.01
+        },
+        "saved_ms": 233.16
+      }
+    },
+    {
+      "benchmark": "handoff",
+      "at": "2026-08-28T12:01:32+00:00",
+      "scripted": true,
+      "quotable": true,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "draft_to_full_handoff": {
+          "n": 6,
+          "mean_ms": 9.48,
+          "median_ms": 8.91,
+          "p90_ms": 12.9,
+          "min_ms": 8.08,
+          "max_ms": 12.9,
+          "stdev_ms": 1.8
+        },
+        "wasted_ladder_rungs": {
+          "n": 6,
+          "mean_ms": 0.0,
+          "median_ms": 0.0,
+          "p90_ms": 0,
+          "min_ms": 0,
+          "max_ms": 0,
+          "stdev_ms": 0.0
+        },
+        "visible_stall_threshold_ms": 100.0,
+        "within_threshold": true
+      }
+    },
+    {
+      "benchmark": "prompt_size",
+      "at": "2026-08-28T12:01:32+00:00",
+      "scripted": true,
+      "quotable": true,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "draft_prompt_tokens": 177,
+        "full_prompt_tokens": 313,
+        "changed_only_prompt_tokens": 283,
+        "draft_vs_full_reduction": 0.4345,
+        "changed_only_reduction": 0.0958,
+        "line_format_vs_raw_json_element_list": 0.8619
+      }
+    },
+    {
+      "benchmark": "sampling",
+      "at": "2026-08-28T12:01:35+00:00",
+      "scripted": true,
+      "quotable": true,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "temperature_0.0": {
+          "identical_fraction": 1.0,
+          "distinct_outputs": 1
+        },
+        "temperature_0.1": {
+          "identical_fraction": 1.0,
+          "distinct_outputs": 1
+        },
+        "temperature_0.3": {
+          "identical_fraction": 1.0,
+          "distinct_outputs": 1
+        },
+        "temperature_0.7": {
+          "identical_fraction": 1.0,
+          "distinct_outputs": 1
+        },
+        "locked": {
+          "draft": 0.0,
+          "text": 0.1,
+          "vision": 0.1,
+          "top_p": 0.9,
+          "seed": 42
+        }
+      }
+    },
+    {
+      "benchmark": "load",
+      "at": "2026-08-28T12:01:35+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "runs": 10,
+        "failures": 0,
+        "per_task": {
+          "n": 10,
+          "mean_ms": 6.47,
+          "median_ms": 5.01,
+          "p90_ms": 14.18,
+          "min_ms": 3.25,
+          "max_ms": 14.18,
+          "stdev_ms": 3.59
+        },
+        "rss_start_mb": 36.6,
+        "rss_end_mb": 36.6,
+        "rss_growth_mb": 0.0,
+        "leak_suspected": false
+      }
+    },
+    {
+      "benchmark": "memory_ceiling",
+      "at": "2026-08-28T12:01:35+00:00",
+      "scripted": true,
+      "quotable": false,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "total_ram_gb": 16.85,
+        "available_before_gb": 0.94,
+        "models": {
+          "draft": {
+            "model": "qwen2.5:0.5b-instruct-q4_K_M",
+            "load_ms": 0.0
+          },
+          "text": {
+            "model": "qwen2.5:3b-instruct-q4_K_M",
+            "load_ms": 0.0
+          },
+          "vision": {
+            "model": "qwen2-vl:2b-instruct-q4_K_M",
+            "load_ms": 0.0
+          }
+        },
+        "errors": [],
+        "resident": [
+          {
+            "name": "qwen2-vl:2b-instruct-q4_K_M",
+            "vram_mb": 0.0,
+            "size_mb": 0.0
+          },
+          {
+            "name": "qwen2.5:0.5b-instruct-q4_K_M",
+            "vram_mb": 0.0,
+            "size_mb": 0.0
+          },
+          {
+            "name": "qwen2.5:3b-instruct-q4_K_M",
+            "vram_mb": 0.0,
+            "size_mb": 0.0
+          }
+        ],
+        "resident_total_mb": 0.0,
+        "host_process_rss_mb": 36.6,
+        "available_after_gb": 0.94,
+        "headroom_ok": false,
+        "voice_checkpoints": {
+          "hi": "C:\\Users\\Public\\voicc\\native-host\\models\\voice\\indicconformer-hi",
+          "kn": "C:\\Users\\Public\\voicc\\native-host\\models\\voice\\indicconformer-kn",
+          "en": "C:\\Users\\Public\\voicc\\native-host\\models\\voice\\whisper-small-en"
+        }
+      }
+    },
+    {
+      "benchmark": "dom_round_trips",
+      "at": "2026-08-28T12:01:35+00:00",
+      "scripted": true,
+      "quotable": true,
+      "models": {
+        "draft": "qwen2.5:0.5b-instruct-q4_K_M",
+        "text": "qwen2.5:3b-instruct-q4_K_M",
+        "vision": "qwen2-vl:2b-instruct-q4_K_M"
+      },
+      "result": {
+        "round_trips": 1,
+        "queries_sent": 9,
+        "queries_deduplicated": 1,
+        "round_trips_without_batching": 10,
+        "reduction": 0.9,
+        "messages_sent": 1
+      }
+    }
+  ]
+}

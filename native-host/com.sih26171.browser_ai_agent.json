@@ -1,9 +1,0 @@
-{
-  "name": "com.sih26171.browser_ai_agent",
-  "description": "SIH26171 On-Device Browser AI Agent Native Host Bridge",
-  "path": "host.py",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://*/"
-  ]
-}

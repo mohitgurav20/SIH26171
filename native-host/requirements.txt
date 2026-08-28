@@ -1,7 +1,13 @@
-pydantic>=2.5.0
-httpx>=0.25.0
-asyncio
-transformers>=4.36.0
-torch>=2.1.0
-torchaudio>=2.1.0
-numpy>=1.24.0
+# Native host runtime. Everything is local; nothing here phones home.
+pydantic>=2.6,<3          # structured-output enforcement (phase 30)
+requests>=2.31            # loopback HTTP to Ollama only
+psutil>=5.9               # resource + memory-ceiling benchmarks (127, 161)
+
+# Voice (phase 63). Install only on the machines that run the mic demo:
+# the checkpoints are large and the host degrades cleanly without them.
+#   transformers>=4.40
+#   torch>=2.2
+#   soundfile>=0.12
+
+# Development
+pytest>=8.0
