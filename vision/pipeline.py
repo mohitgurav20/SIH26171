@@ -1,5 +1,6 @@
 import time
 import logging
+from enum import Enum
 from typing import Dict, Any, Optional
 from PIL import Image
 
@@ -9,19 +10,30 @@ from .grounding import NumberedTagGrounding
 from .router import DOMVisionRouter, PerceptionRoute
 from .proof_of_perception import ProofOfPerception, HashChainAuditLog
 
+class VisionModelTier(str, Enum):
+    """Vision model tier toggle for speed vs. high-accuracy fallback (Task #117)."""
+    FAST = "fast_moondream"          # ~1.8B lightweight model, ultra fast (<200ms)
+    HIGH_ACCURACY = "high_acc_qwen2_vl" # ~7B heavier model for complex visual parsing
+
 class VisionPipeline:
     """
-    End-to-End Vision Perception & Grounding Pipeline (Task #37, #53, #170).
+    End-to-End Vision Perception & Grounding Pipeline (Task #37, #53, #117, #170).
     Connects screenshot ingestion -> region foveation -> tag overlay -> evidence logging.
     """
 
-    def __init__(self):
+    def __init__(self, model_tier: VisionModelTier = VisionModelTier.FAST):
+        self.model_tier = model_tier
         self.preprocessor = ScreenshotPreprocessor()
         self.foveator = FoveatedRegionLocator()
         self.grounder = NumberedTagGrounding()
         self.router = DOMVisionRouter()
         self.audit_log = HashChainAuditLog()
         self.pop = ProofOfPerception(self.audit_log)
+
+    def set_model_tier(self, tier: VisionModelTier):
+        """Toggle between fast and high-accuracy vision models (Task #117)."""
+        self.model_tier = tier
+        logging.info(f"Vision model tier switched to: {tier.value}")
 
     def process_perception(
         self,
@@ -45,6 +57,7 @@ class VisionPipeline:
                 "route": route.value,
                 "metrics": metrics,
                 "foveated": False,
+                "model_tier": self.model_tier.value,
                 "image_base64": None
             }
 
@@ -79,5 +92,6 @@ class VisionPipeline:
             "route": route.value,
             "metrics": metrics,
             "foveated": len(clusters) > 0,
+            "model_tier": self.model_tier.value,
             "processed_image_base64": self.preprocessor.encode_image_base64(grounded_image)
         }
