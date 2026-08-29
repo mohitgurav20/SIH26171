@@ -311,15 +311,22 @@
    * Action Simulation Helpers
    */
   async function simulateClick(element) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    if (!element) return;
+
+    // Find clickable parent if this is an inner text/icon node
+    const clickableParent = element.closest('a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"]') || element;
+
+    try {
+      clickableParent.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    } catch(e) {}
     await sleep(150);
 
-    const prevOutline = element.style.outline;
-    const prevTransition = element.style.transition;
-    element.style.transition = 'outline 0.2s ease-in-out';
-    element.style.outline = '3px solid #00f2fe';
+    const prevOutline = clickableParent.style.outline;
+    const prevTransition = clickableParent.style.transition;
+    clickableParent.style.transition = 'outline 0.2s ease-in-out';
+    clickableParent.style.outline = '3px solid #00f2fe';
 
-    const rect = element.getBoundingClientRect();
+    const rect = clickableParent.getBoundingClientRect();
     const clientX = rect.left + rect.width / 2;
     const clientY = rect.top + rect.height / 2;
 
@@ -333,20 +340,29 @@
       screenY: clientY
     };
 
-    element.dispatchEvent(new PointerEvent('pointerdown', eventInit));
-    element.dispatchEvent(new MouseEvent('mousedown', eventInit));
-    element.focus();
-    element.dispatchEvent(new PointerEvent('pointerup', eventInit));
-    element.dispatchEvent(new MouseEvent('mouseup', eventInit));
-    element.dispatchEvent(new MouseEvent('click', eventInit));
+    clickableParent.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+    clickableParent.dispatchEvent(new MouseEvent('mousedown', eventInit));
+    if (typeof clickableParent.focus === 'function') clickableParent.focus();
+    clickableParent.dispatchEvent(new PointerEvent('pointerup', eventInit));
+    clickableParent.dispatchEvent(new MouseEvent('mouseup', eventInit));
+    clickableParent.dispatchEvent(new MouseEvent('click', eventInit));
 
-    if (typeof element.click === 'function') {
-      element.click();
+    if (typeof clickableParent.click === 'function') {
+      clickableParent.click();
+    }
+
+    // Direct href navigation fallback for <a> links if framework didn't intercept
+    if (clickableParent.tagName === 'A' && clickableParent.href && !clickableParent.href.startsWith('javascript:')) {
+      if (clickableParent.target === '_blank') {
+        window.open(clickableParent.href, '_blank');
+      } else {
+        window.location.href = clickableParent.href;
+      }
     }
 
     await sleep(200);
-    element.style.outline = prevOutline;
-    element.style.transition = prevTransition;
+    clickableParent.style.outline = prevOutline;
+    clickableParent.style.transition = prevTransition;
   }
 
   async function simulateType(element, text) {
