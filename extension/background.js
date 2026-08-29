@@ -351,25 +351,28 @@ async function handleUserCommand(commandPayload) {
       raw_html_bytes: domData.raw_html_bytes || 0
     } : null;
 
-    // --- INSTANT DOM ACTION EXECUTION ---
-    // If we have DOM elements, generate an instant plan and execute it right away
-    if (domData && domData.elements && domData.elements.length > 0) {
-      const instantPlan = generateRealActionPlan(commandPayload.text, domData.elements, activeTab.url);
-      if (instantPlan && instantPlan.actions.length > 0) {
-        // Send to content script to execute on the real webpage immediately
+    // --- INSTANT ACTION EXECUTION ---
+    // Always generate instant reflex plan (works on New Tab, blank tabs, and live web pages)
+    const elementsList = domData?.elements || [];
+    const instantPlan = generateRealActionPlan(commandPayload.text, elementsList, activeTab.url);
+
+    if (instantPlan && instantPlan.actions.length > 0) {
+      // Send to content script to execute on the real webpage (if not a chrome:// page)
+      if (activeTab.id && !activeTab.url?.startsWith('chrome://') && !activeTab.url?.startsWith('edge://')) {
         chrome.tabs.sendMessage(activeTab.id, {
           type: 'execute_actions',
           payload: instantPlan
         }).catch(() => {});
-
-        // Broadcast to popup
-        chrome.runtime.sendMessage({
-          type: 'action_plan',
-          payload: instantPlan
-        }).catch(() => {});
-
-        broadcastStatus('acting', `Executing: ${instantPlan.actions[0].description}`);
       }
+
+      // Broadcast immediately to popup
+      chrome.runtime.sendMessage({
+        type: 'action_plan',
+        payload: instantPlan
+      }).catch(() => {});
+
+      broadcastStatus('online', `Completed: ${instantPlan.actions[0].description}`);
+      return;
     }
 
     // Forward properly formatted request to native host for deep multi-step reasoning
