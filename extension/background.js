@@ -307,7 +307,13 @@ async function handleUserCommand(commandPayload) {
   broadcastStatus('thinking', 'Extracting page DOM & capturing context...');
 
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tabs || !tabs[0]) {
+      tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    }
+    if (!tabs || !tabs[0]) {
+      tabs = await chrome.tabs.query({ active: true });
+    }
     if (!tabs || !tabs[0]) {
       throw new Error('No active browser tab found');
     }
@@ -323,7 +329,7 @@ async function handleUserCommand(commandPayload) {
       screenshot = prefetchedState.screenshot;
       prefetchedState = null;
     } else {
-      // Normal fetch
+      // Normal fetch with auto-inject fallback
       try {
         const response = await chrome.tabs.sendMessage(activeTab.id, {
           type: 'extract_dom',
@@ -391,6 +397,13 @@ async function handleUserCommand(commandPayload) {
 
       broadcastStatus('online', `Completed: ${instantPlan.actions[0].description}`);
       return;
+    } else if (instantPlan) {
+      // Broadcast even if 0 actions (e.g. Q&A or info)
+      chrome.runtime.sendMessage({
+        type: 'action_plan',
+        payload: instantPlan
+      }).catch(() => {});
+      broadcastStatus('online', 'Agent Ready');
     }
 
     // Forward properly formatted request to native host for deep multi-step reasoning
