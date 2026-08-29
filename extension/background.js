@@ -459,27 +459,74 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // 3. "Get into the website" / "Click search result" / "Open first link"
   else if (cleanQ.includes('get into') || cleanQ.includes('into the website') ||
     cleanQ.includes('first result') || cleanQ.includes('first link') || cleanQ.includes('search result') ||
-    cleanQ.includes('open result') || cleanQ.includes('go to website') || cleanQ.includes('visit') ||
-    cleanQ.includes('click result') || cleanQ.includes('open this')) {
-    // Find primary link or search result
+    cleanQ.includes('open result') || cleanQ.includes('go to website') || cleanQ.includes('visit result') ||
+    cleanQ.includes('click result') || cleanQ.includes('open this') || cleanQ.includes('enter website')) {
+    
+    // Smart link selection: Prioritize main search result links over navigation headers
     const linkElement = elements.find(el => 
       (el.role === 'link' || el.tag_name === 'A') &&
-      el.text && el.text.length > 5 &&
+      el.text && el.text.length > 8 &&
       !el.text.toLowerCase().includes('google') &&
-      !el.text.toLowerCase().includes('sign in')
-    ) || elements.find(el => el.role === 'link' || el.tag_name === 'A');
+      !el.text.toLowerCase().includes('sign in') &&
+      !el.text.toLowerCase().includes('privacy') &&
+      !el.text.toLowerCase().includes('terms')
+    ) || elements.find(el => (el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 3)
+      || elements.find(el => el.role === 'link' || el.tag_name === 'A');
 
     if (linkElement) {
       actions.push({
         step: 0,
         tag_id: linkElement.tag_id,
         action: 'click',
-        description: `Click primary result link: "${linkElement.text || 'Website'}" (#${linkElement.tag_id})`
+        description: `Click website link: "${linkElement.text?.slice(0, 45) || 'Primary Result'}" (#${linkElement.tag_id})`
       });
-      reasoning = `Found top website link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}). Clicking to open.`;
+      reasoning = `Identified primary website link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}). Clicking to open.`;
     }
   }
-  // 4. Scroll intents
+  // 4. Click specific element: "click on about us", "click login", "tap submit", "click admissions"
+  else if (cleanQ.startsWith('click ') || cleanQ.startsWith('tap ') || cleanQ.startsWith('press ') || cleanQ.startsWith('select ')) {
+    const targetLabel = cleanQ.replace(/^(?:click on|click|tap on|tap|press on|press|select)\s+(?:the\s+)?/i, '').replace(/\s+(?:button|link|tab|option)$/i, '').trim();
+
+    let bestEl = null;
+    let bestScore = 0;
+
+    for (const el of elements) {
+      const elText = (el.text || el.aria_label || el.attributes?.title || el.attributes?.placeholder || el.name || '').toLowerCase();
+      if (!elText) continue;
+
+      let score = 0;
+      if (elText === targetLabel) score = 100;
+      else if (elText.includes(targetLabel)) score = 50;
+      else {
+        const words = targetLabel.split(/\s+/);
+        for (const w of words) {
+          if (w.length > 2 && elText.includes(w)) score += 10;
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestEl = el;
+      }
+    }
+
+    if (bestEl && bestScore > 0) {
+      actions.push({
+        step: 0,
+        tag_id: bestEl.tag_id,
+        action: 'click',
+        description: `Click "${bestEl.text || bestEl.aria_label || targetLabel}" (#${bestEl.tag_id})`
+      });
+      reasoning = `Found element matching "${targetLabel}" (#${bestEl.tag_id}) with confidence score ${bestScore}.`;
+    } else {
+      // If element not on page, search for target
+      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(targetLabel)}`;
+      chrome.tabs.create({ url: searchUrl });
+      actions.push({ step: 0, tag_id: 0, action: 'navigate', value: searchUrl, description: `Search "${targetLabel}" on Google` });
+      reasoning = `Element "${targetLabel}" not found on page. Searching on Google.`;
+    }
+  }
+  // 5. Scroll intents
   else if (cleanQ.includes('scroll down') || cleanQ.includes('down') || cleanQ.includes('page down')) {
     actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 600, description: 'Scroll page down 600px' });
     reasoning = `Recognized scroll command. Scrolling page down.`;
@@ -487,7 +534,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 600, description: 'Scroll page up 600px' });
     reasoning = `Recognized scroll command. Scrolling page up.`;
   }
-  // 5. Search / Type intents
+  // 6. Search / Type intents
   else if (cleanQ.includes('search') || cleanQ.includes('type') || cleanQ.includes('find') || cleanQ.includes('enter') || cleanQ.includes('write') || cleanQ.includes('google')) {
     let searchText = cleanQ.replace(/^(?:search for|search|type|find|enter|write|google for|google)\s*/i, '').trim();
     if (!searchText) searchText = cleanQ;
@@ -514,7 +561,6 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       });
       reasoning = `Found search box "${inputNode.text || inputNode.attributes?.placeholder || 'search'}" (#${inputNode.tag_id}). Typing query and submitting.`;
     } else {
-      // Instant fallback: If no search input exists on current page, search via Google in new tab
       const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchText)}`;
       chrome.tabs.create({ url: searchUrl });
       actions.push({
@@ -527,7 +573,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       reasoning = `No search field found on active tab. Opening Google search for "${searchText}".`;
     }
   }
-  // 4. General Click / Keyword matching
+  // 7. General Keyword / DOM matching fallback
   else {
     let bestMatch = null;
     let bestScore = 0;
@@ -537,11 +583,11 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       if (!elText) continue;
 
       let score = 0;
-      const words = q.split(/\s+/);
+      const words = cleanQ.split(/\s+/);
       for (const w of words) {
-        if (w.length > 2 && elText.includes(w)) score += 2;
+        if (w.length > 2 && elText.includes(w)) score += 3;
       }
-      if (elText.includes(q)) score += 5;
+      if (elText.includes(cleanQ)) score += 10;
 
       if (score > bestScore) {
         bestScore = score;
