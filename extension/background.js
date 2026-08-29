@@ -456,7 +456,101 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     });
     reasoning = `Opening "${rawTarget}" in a new tab.`;
   }
-  // 3. "Get into the website" / "Click search result" / "Open first link"
+  // 3. Login with credentials & Form Automation (< 30ms)
+  // Matches: "login with username mohit and password secret", "enter credentials", "login to portal", "sign in"
+  else if (cleanQ.includes('login') || cleanQ.includes('sign in') || cleanQ.includes('credentials') || cleanQ.includes('log in')) {
+    const userMatch = cleanQ.match(/(?:username|user|email|id|login)\s+(?:is\s+|as\s+)?([^\s]+)/i);
+    const passMatch = cleanQ.match(/(?:password|pass|pwd)\s+(?:is\s+|as\s+)?([^\s]+)/i);
+
+    // Find username & password fields in active page DOM
+    const userField = elements.find(el => 
+      (el.tag_name === 'INPUT' || el.role === 'textbox') &&
+      (el.attributes?.type === 'email' || el.attributes?.type === 'text' || el.attributes?.name?.toLowerCase().includes('user') ||
+       el.attributes?.name?.toLowerCase().includes('email') || el.attributes?.id?.toLowerCase().includes('user') ||
+       el.attributes?.placeholder?.toLowerCase().includes('user') || el.attributes?.placeholder?.toLowerCase().includes('email'))
+    ) || elements.find(el => el.tag_name === 'INPUT' && el.attributes?.type !== 'password');
+
+    const passField = elements.find(el => 
+      el.tag_name === 'INPUT' && (el.attributes?.type === 'password' || el.attributes?.name?.toLowerCase().includes('pass') ||
+      el.attributes?.id?.toLowerCase().includes('pass') || el.attributes?.placeholder?.toLowerCase().includes('pass'))
+    );
+
+    const loginBtn = elements.find(el => 
+      (el.role === 'button' || el.tag_name === 'BUTTON' || el.tag_name === 'INPUT') &&
+      (el.text?.toLowerCase().includes('log in') || el.text?.toLowerCase().includes('login') ||
+       el.text?.toLowerCase().includes('sign in') || el.text?.toLowerCase().includes('submit') ||
+       el.value?.toLowerCase().includes('login') || el.attributes?.value?.toLowerCase().includes('login'))
+    ) || elements.find(el => (el.role === 'link' || el.tag_name === 'A') && 
+      (el.text?.toLowerCase().includes('login') || el.text?.toLowerCase().includes('sign in')));
+
+    let stepIdx = 0;
+    if (userField && userMatch) {
+      actions.push({
+        step: stepIdx++,
+        tag_id: userField.tag_id,
+        action: 'type',
+        value: userMatch[1],
+        description: `Enter username "${userMatch[1]}" (#${userField.tag_id})`
+      });
+    }
+
+    if (passField && passMatch) {
+      actions.push({
+        step: stepIdx++,
+        tag_id: passField.tag_id,
+        action: 'type',
+        value: passMatch[1],
+        description: `Enter password into #${passField.tag_id}`
+      });
+    }
+
+    if (loginBtn) {
+      actions.push({
+        step: stepIdx++,
+        tag_id: loginBtn.tag_id,
+        action: 'click',
+        description: `Click "${loginBtn.text || 'Login'}" button (#${loginBtn.tag_id})`
+      });
+    }
+
+    if (actions.length > 0) {
+      reasoning = `Automating login workflow: filled credentials and clicked submit.`;
+    }
+  }
+  // 4. Targeted Form Field Filling: "type John in name", "fill email with test@gmail.com"
+  else if (cleanQ.match(/^(?:type|fill|enter|input)\s+(.+?)\s+(?:in|into|with|as)\s+(.+?)$/i)) {
+    const fillMatch = cleanQ.match(/^(?:type|fill|enter|input)\s+(.+?)\s+(?:in|into|with|as)\s+(.+?)$/i);
+    let valPart = fillMatch[1].trim();
+    let fieldPart = fillMatch[2].trim();
+
+    // Check if swapped (e.g. "fill email with test@gmail.com")
+    if (cleanQ.includes(' with ')) {
+      const swapped = cleanQ.match(/^(?:fill|enter|set)\s+(.+?)\s+with\s+(.+?)$/i);
+      if (swapped) {
+        fieldPart = swapped[1].trim();
+        valPart = swapped[2].trim();
+      }
+    }
+
+    const targetInput = elements.find(el => 
+      (el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA' || el.role === 'textbox') &&
+      (el.text?.toLowerCase().includes(fieldPart) || el.attributes?.name?.toLowerCase().includes(fieldPart) ||
+       el.attributes?.placeholder?.toLowerCase().includes(fieldPart) || el.attributes?.id?.toLowerCase().includes(fieldPart) ||
+       el.aria_label?.toLowerCase().includes(fieldPart))
+    ) || elements.find(el => el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA');
+
+    if (targetInput) {
+      actions.push({
+        step: 0,
+        tag_id: targetInput.tag_id,
+        action: 'type',
+        value: valPart,
+        description: `Fill "${valPart}" into ${fieldPart} (#${targetInput.tag_id})`
+      });
+      reasoning = `Found field matching "${fieldPart}" (#${targetInput.tag_id}). Filled with "${valPart}".`;
+    }
+  }
+  // 5. "Get into the website" / "Click search result" / "Open first link"
   else if (cleanQ.includes('get into') || cleanQ.includes('into the website') ||
     cleanQ.includes('first result') || cleanQ.includes('first link') || cleanQ.includes('search result') ||
     cleanQ.includes('open result') || cleanQ.includes('go to website') || cleanQ.includes('visit result') ||
