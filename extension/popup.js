@@ -399,10 +399,12 @@ document.addEventListener('DOMContentLoaded', () => {
         stepDiv.className = 'step-item done';
         stepBadge.style.color = '#059669';
         stepBadge.textContent = 'Done ✓';
+        updateStatus('online', 'Task Complete ✓');
       } else {
         stepDiv.className = 'step-item';
         stepBadge.style.color = '#ef4444';
         stepBadge.textContent = 'Failed ✗';
+        updateStatus('error', result.error || 'Step failed');
       }
     }
   }

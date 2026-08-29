@@ -572,6 +572,7 @@
         break;
       }
 
+      case 'execute_actions':
       case 'action_plan': {
         executeActionPlan(message.payload)
           .then(results => sendResponse({ status: 'completed', results }))

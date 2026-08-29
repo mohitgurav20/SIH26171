@@ -411,7 +411,21 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
 
   // =========================================================================
-  // PRIORITY 1: Autonomous Login & Form Filling (< 30ms)
+  // PRIORITY 1: Scroll intents (< 20ms) - MUST be first to avoid false text matches
+  // Matches: "scroll down this existing website", "scroll down", "scroll up", "page down"
+  // =========================================================================
+  if (cleanQ.includes('scroll down') || cleanQ.includes('page down') || cleanQ.startsWith('scroll') || (cleanQ.includes('scroll') && cleanQ.includes('down'))) {
+    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 600, description: 'Scroll page down 600px' });
+    reasoning = `Recognized scroll command. Scrolling page down.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
+  } else if (cleanQ.includes('scroll up') || cleanQ.includes('page up') || (cleanQ.includes('scroll') && cleanQ.includes('up'))) {
+    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 600, description: 'Scroll page up 600px' });
+    reasoning = `Recognized scroll command. Scrolling page up.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
+  }
+
+  // =========================================================================
+  // PRIORITY 2: Autonomous Login & Form Filling (< 30ms)
   // If user says "login ...", "sign in ...", "enter credentials ..."
   // =========================================================================
   const isLoginIntent = cleanQ.includes('login') || cleanQ.includes('sign in') || cleanQ.includes('credentials') || cleanQ.includes('log in');
@@ -478,14 +492,13 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   }
 
   // =========================================================================
-  // PRIORITY 2: On-Page Result Entry / Click Matching Link (< 30ms)
-  // If user says "get into isro", "login the isro website", "click result", "click admissions"
-  // Look at the CURRENT WEBPAGE and click the best matching link or button!
+  // PRIORITY 3: On-Page Result Entry / Click / Choose / Select Matching Element (< 30ms)
+  // Matches: "choose English language on the website", "click admissions", "get into isro", "select careers"
   // =========================================================================
   if (elements.length > 0) {
     // Extract keywords
-    const searchTerms = cleanQ.replace(/^(?:open|get into|into|go to|click on|click|visit|tap|login|enter)\s+(?:the\s+)?/i, '')
-                              .replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
+    const searchTerms = cleanQ.replace(/^(?:choose|select|pick|open|get into|into|go to|click on|click|visit|tap|login|enter)\s+(?:the\s+)?/i, '')
+                              .replace(/\s+(?:on the website|on website|on page|language|website|site|page|portal|url|link)$/i, '').trim();
 
     let bestEl = null;
     let bestScore = 0;
@@ -498,23 +511,23 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       let score = 0;
       
       // Match query terms
-      const words = (searchTerms || cleanQ).split(/\s+/).filter(w => w.length > 2);
+      const words = (searchTerms || cleanQ).split(/\s+/).filter(w => w.length > 2 && w !== 'the' && w !== 'this');
       for (const w of words) {
         if (elText.includes(w)) score += 30;
         if (elHref.includes(w)) score += 20;
       }
 
       // Exact match bonus
-      if (searchTerms && elText.includes(searchTerms)) score += 50;
+      if (searchTerms && elText.includes(searchTerms)) score += 60;
 
       // Penalize generic navigational links on search engines
       if (elText.includes('privacy') || elText.includes('terms') || elText === 'google' || elText === 'sign in') {
         score -= 40;
       }
 
-      // Prioritize substantial result links on search pages
-      if ((el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 8) {
-        score += 15;
+      // Prioritize prominent interactive buttons/links
+      if (el.role === 'button' || el.tag_name === 'BUTTON' || (el.role === 'link' && el.text?.length > 3)) {
+        score += 10;
       }
 
       if (score > bestScore) {
@@ -523,7 +536,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       }
     }
 
-    // If an element on the current page clearly matches the user's target, CLICK IT!
+    // If an element on the current page matches the user's target, CLICK IT!
     if (bestEl && bestScore >= 30) {
       actions.push({
         step: 0,
