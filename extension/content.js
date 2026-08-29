@@ -616,7 +616,7 @@
       contentSpeechRec = new SpeechRecognition();
       contentSpeechRec.continuous = true;
       contentSpeechRec.interimResults = true;
-      contentSpeechRec.lang = navigator.language || 'en-IN';
+      contentSpeechRec.lang = 'en-US';
       isContentSpeechActive = true;
 
       contentSpeechRec.onresult = (event) => {
@@ -640,7 +640,14 @@
       };
 
       contentSpeechRec.onerror = (event) => {
-        console.warn('[Content] Speech recognition event error:', event.error);
+        if (event.error === 'network') {
+          // If network glitch occurs, retry with en-US after short delay
+          setTimeout(() => {
+            if (isContentSpeechActive && contentSpeechRec) {
+              try { contentSpeechRec.start(); } catch(e) {}
+            }
+          }, 300);
+        }
       };
 
       contentSpeechRec.onend = () => {
@@ -652,7 +659,6 @@
       contentSpeechRec.start();
       return true;
     } catch (err) {
-      console.warn('[Content] Failed to start SpeechRecognition:', err);
       return false;
     }
   }

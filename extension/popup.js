@@ -285,7 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
       localSpeechRec = new SpeechRecognition();
       localSpeechRec.continuous = true;
       localSpeechRec.interimResults = true;
-      localSpeechRec.lang = navigator.language || 'en-IN';
+      localSpeechRec.lang = 'en-US';
 
       localSpeechRec.onresult = (event) => {
         let interimText = '';
@@ -302,7 +302,13 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
       localSpeechRec.onerror = (e) => {
-        console.warn('[Popup] Local speech fallback error:', e.error);
+        if (e.error === 'network') {
+          setTimeout(() => {
+            if (isRecording && localSpeechRec) {
+              try { localSpeechRec.start(); } catch(ex) {}
+            }
+          }, 300);
+        }
       };
 
       localSpeechRec.start();
