@@ -206,6 +206,7 @@
                         node.getAttribute('title') ||
                         (node.getAttribute('aria-labelledby') ? document.getElementById(node.getAttribute('aria-labelledby'))?.textContent?.trim() : null);
 
+      const fullText = (node.textContent || '').trim();
       const finalLabelText = associatedLabel || directText || fullText || node.name || node.id || '';
       const elementText = finalLabelText.replace(/\s+/g, ' ').trim().substring(0, 120);
 
