@@ -41,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let overlaysVisible = false;
   let currentPendingConfirmationId = null;
   let localSpeechRec = null;
+  let alwaysOnMode = false;        // Always-on continuous voice mode
+  let autoResumeTimer = null;      // Timer to auto-resume listening
+  let lastExecutedCommand = '';    // Dedup: avoid re-running same command
 
   // Initialize status from background service worker
   chrome.runtime.sendMessage({ type: 'get_initial_state' }, (res) => {
@@ -76,6 +79,55 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     toggleTagsBtn.style.borderColor = overlaysVisible ? '#f43f5e' : '';
     toggleTagsBtn.style.color = overlaysVisible ? '#f43f5e' : '';
+  });
+
+  // Always-On Mode Toggle Button (injected dynamically)
+  const alwaysOnBtn = document.createElement('button');
+  alwaysOnBtn.id = 'always-on-btn';
+  alwaysOnBtn.className = 'util-btn';
+  alwaysOnBtn.title = 'Toggle Always-On Voice Mode';
+  alwaysOnBtn.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+      <line x1="12" y1="19" x2="12" y2="22"/>
+    </svg>
+    Always-On: OFF
+  `;
+  document.querySelector('.utility-row').appendChild(alwaysOnBtn);
+
+  alwaysOnBtn.addEventListener('click', () => {
+    alwaysOnMode = !alwaysOnMode;
+    if (alwaysOnMode) {
+      alwaysOnBtn.style.borderColor = '#8b5cf6';
+      alwaysOnBtn.style.color = '#8b5cf6';
+      alwaysOnBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+        🟣 Always-On: ON
+      `;
+      updateStatus('online', '🎙️ Always Listening...');
+      // Auto-start listening if not already
+      if (!isRecording) handleToggleMic();
+    } else {
+      alwaysOnBtn.style.borderColor = '';
+      alwaysOnBtn.style.color = '';
+      alwaysOnBtn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+        Always-On: OFF
+      `;
+      if (autoResumeTimer) { clearTimeout(autoResumeTimer); autoResumeTimer = null; }
+      // Stop listening if active from always-on
+      if (isRecording) handleToggleMic();
+      updateStatus('online', 'Agent Ready');
+    }
   });
 
   // Event Listener: Verify Hash Chain
@@ -125,6 +177,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       case 'action_result':
         updateStepResult(message.payload);
+        // In always-on mode, auto-resume listening 1.8s after task finishes
+        if (alwaysOnMode && message.payload?.success !== false) {
+          scheduleAutoResumeListen();
+        }
         break;
 
       case 'speech_live_transcript':
@@ -165,6 +221,29 @@ document.addEventListener('DOMContentLoaded', () => {
         break;
     }
   });
+
+  /**
+   * Schedule auto-resume listening after task completion (Always-On Mode).
+   * Waits 1.8s so the user can see the result, then restarts mic.
+   */
+  function scheduleAutoResumeListen() {
+    if (!alwaysOnMode) return;
+    if (autoResumeTimer) clearTimeout(autoResumeTimer);
+    autoResumeTimer = setTimeout(() => {
+      autoResumeTimer = null;
+      if (alwaysOnMode && !isRecording) {
+        // Reset input for fresh command
+        commandInput.value = '';
+        lastExecutedCommand = '';
+        if (liveTranscript) {
+          liveTranscript.textContent = '🟣 Always-On: Listening for next command...';
+          liveTranscript.classList.remove('has-text');
+        }
+        handleToggleMic();
+        updateStatus('online', '🎙️ Always Listening...');
+      }
+    }, 1800);
+  }
 
   // Voice Mic Toggle & Speech Coordination
   let speechSilenceTimer = null;
@@ -263,14 +342,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Submit recognized text if present
       const capturedText = commandInput.value.trim();
-      if (capturedText && !capturedText.toLowerCase().startsWith('listening') && capturedText.length > 1) {
-        reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
-        handleSendCommand();
-      } else {
+      const isAlwaysOnResume = capturedText.toLowerCase().startsWith('🟣');
+      if (capturedText && !capturedText.toLowerCase().startsWith('listening') && !isAlwaysOnResume && capturedText.length > 1) {
+        // Dedup: don't re-execute same command back to back
+        if (capturedText !== lastExecutedCommand) {
+          lastExecutedCommand = capturedText;
+          reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
+          handleSendCommand();
+        } else {
+          scheduleAutoResumeListen();
+        }
+      } else if (!alwaysOnMode) {
         reasoningBox.innerHTML = `<em>No speech recognized. Tap mic and try speaking clearly, or type below.</em>`;
+      } else {
+        // In always-on mode, no speech = just resume listening again
+        scheduleAutoResumeListen();
       }
 
-      updateStatus('online', 'Agent Ready');
+      if (!alwaysOnMode) updateStatus('online', 'Agent Ready');
     }
   }
 
@@ -383,10 +472,13 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       if (actions.some(a => a.action === 'navigate')) {
         updateStatus('online', 'Task Complete ✓');
+        // Navigate actions resolve instantly — auto-resume for next command
+        if (alwaysOnMode) scheduleAutoResumeListen();
       }
     } else {
       planStepsContainer.style.display = 'none';
-      updateStatus('online', 'Agent Ready');
+      updateStatus('online', alwaysOnMode ? '🎙️ Always Listening...' : 'Agent Ready');
+      if (alwaysOnMode) scheduleAutoResumeListen();
     }
   }
 
