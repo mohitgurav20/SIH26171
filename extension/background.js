@@ -275,6 +275,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       return true;
 
+    case 'speech_live_transcript':
+      // Broadcast live recognized words from content script to popup UI
+      chrome.runtime.sendMessage({
+        type: 'speech_live_transcript',
+        text: message.text
+      }).catch(() => {});
+      sendResponse({ status: 'broadcasted' });
+      return true;
+
+    case 'request_permission_tab':
+      const permUrl = chrome.runtime.getURL('permission.html');
+      chrome.tabs.query({}, (tabs) => {
+        const alreadyOpen = tabs.some(t => t.url && t.url.startsWith(permUrl));
+        if (!alreadyOpen) {
+          chrome.tabs.create({ url: permUrl });
+        }
+      });
+      sendResponse({ status: 'opening' });
+      return true;
+
     default:
       sendResponse({ status: 'unrecognized_type' });
   }
@@ -319,49 +339,51 @@ async function handleUserCommand(commandPayload) {
       screenshot = await captureActiveTabScreenshot();
     }
 
-    if (domData) {
-      forwardToNativeHost({
-        type: 'dom_data',
-        id: `dom-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        payload: domData
-      });
-    }
+    // Format PageState object matching voicc_host schema
+    const pageState = domData ? {
+      url: activeTab.url || '',
+      title: activeTab.title || '',
+      elements: domData.elements || [],
+      changed_tag_ids: domData.changed_tag_ids || [],
+      has_opaque_regions: domData.has_opaque_regions || false,
+      layout_hash: domData.layout_hash || '',
+      dom_payload_bytes: domData.dom_payload_bytes || 0,
+      raw_html_bytes: domData.raw_html_bytes || 0
+    } : null;
 
-    if (screenshot) {
-      forwardToNativeHost({
-        type: 'screenshot',
-        id: `ss-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        payload: {
-          ...screenshot,
-          url: activeTab.url || ''
-        }
-      });
-    }
-
-    // Standalone fallback: If native host is not available, execute real plan directly on page
-    if (!nativePort && domData && domData.elements) {
-      const plan = generateRealActionPlan(commandPayload.text, domData.elements);
-      if (plan) {
-        // Send to content script to execute on the real webpage
+    // --- INSTANT DOM ACTION EXECUTION ---
+    // If we have DOM elements, generate an instant plan and execute it right away
+    if (domData && domData.elements && domData.elements.length > 0) {
+      const instantPlan = generateRealActionPlan(commandPayload.text, domData.elements, activeTab.url);
+      if (instantPlan && instantPlan.actions.length > 0) {
+        // Send to content script to execute on the real webpage immediately
         chrome.tabs.sendMessage(activeTab.id, {
           type: 'execute_actions',
-          payload: plan
+          payload: instantPlan
         }).catch(() => {});
 
-        // Broadcast real plan to popup
+        // Broadcast to popup
         chrome.runtime.sendMessage({
           type: 'action_plan',
-          payload: plan
+          payload: instantPlan
         }).catch(() => {});
 
-        broadcastStatus('acting', `Executing: ${plan.actions.length} action(s) on page`);
-        return;
+        broadcastStatus('acting', `Executing: ${instantPlan.actions[0].description}`);
       }
     }
 
-    broadcastStatus('thinking', 'Agent analyzing page and planning actions...');
+    // Forward properly formatted request to native host for deep multi-step reasoning
+    if (nativePort) {
+      forwardToNativeHost({
+        type: 'command',
+        id: `cmd-${Date.now()}`,
+        task: commandPayload.text,
+        page: pageState,
+        image_b64: screenshot?.image_base64 || '',
+        visible_tags: domData?.elements ? domData.elements.map(e => e.tag_id) : []
+      });
+    }
+
   } catch (error) {
     console.error('[Background] Error processing command pipeline:', error);
     broadcastStatus('error', error.message);
@@ -369,30 +391,93 @@ async function handleUserCommand(commandPayload) {
 }
 
 // Generate Real Action Plan matching user query against actual webpage DOM elements
-function generateRealActionPlan(query, elements) {
+function generateRealActionPlan(query, elements, currentUrl = '') {
   if (!query) return null;
   const q = query.toLowerCase().trim();
   const actions = [];
   let reasoning = '';
 
-  // 1. Scroll intents
-  if (q.includes('scroll down') || q.includes('down') || q.includes('page down')) {
-    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 500, description: 'Scroll page down 500px' });
+  // 1. Instant Navigation / Open Website intents (< 10ms)
+  // Handles: "can you open Google summer of code for me", "open youtube", "go to github", "visit wikipedia"
+  const navPattern = /^(?:can you\s+)?(?:please\s+)?(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|for\s+me|please))?$/i;
+  const navMatch = q.match(navPattern);
+
+  if (navMatch) {
+    const rawTarget = navMatch[1].trim();
+    let targetUrl;
+
+    const KNOWN_SITES = {
+      'youtube': 'https://www.youtube.com',
+      'google': 'https://www.google.com',
+      'github': 'https://www.github.com',
+      'wikipedia': 'https://www.wikipedia.org',
+      'reddit': 'https://www.reddit.com',
+      'gmail': 'https://mail.google.com',
+      'chatgpt': 'https://chat.openai.com',
+      'isro': 'https://www.isro.gov.in',
+      'gsoc': 'https://summerofcode.withgoogle.com',
+      'google summer of code': 'https://summerofcode.withgoogle.com'
+    };
+
+    const lowerTarget = rawTarget.toLowerCase();
+    if (KNOWN_SITES[lowerTarget]) {
+      targetUrl = KNOWN_SITES[lowerTarget];
+    } else if (rawTarget.includes('.') && !rawTarget.includes(' ')) {
+      targetUrl = rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`;
+    } else {
+      targetUrl = `https://www.google.com/search?q=${encodeURIComponent(rawTarget)}`;
+    }
+
+    chrome.tabs.create({ url: targetUrl });
+    actions.push({
+      step: 0,
+      tag_id: 0,
+      action: 'navigate',
+      value: targetUrl,
+      description: `Navigate to ${rawTarget}`
+    });
+    reasoning = `Opening "${rawTarget}" in a new tab.`;
+  }
+  // 2. "Get into the website" / "Click search result" / "Open first link"
+  else if (q.includes('get into') || q.includes('into the website') ||
+    q.includes('first result') || q.includes('first link') || q.includes('search result') ||
+    q.includes('open result') || q.includes('go to website') || q.includes('visit') ||
+    q.includes('click result') || q.includes('open this')) {
+    // Find primary link or search result
+    const linkElement = elements.find(el => 
+      (el.role === 'link' || el.tag_name === 'A') &&
+      el.text && el.text.length > 5 &&
+      !el.text.toLowerCase().includes('google') &&
+      !el.text.toLowerCase().includes('sign in')
+    ) || elements.find(el => el.role === 'link' || el.tag_name === 'A');
+
+    if (linkElement) {
+      actions.push({
+        step: 0,
+        tag_id: linkElement.tag_id,
+        action: 'click',
+        description: `Click primary result link: "${linkElement.text || 'Website'}" (#${linkElement.tag_id})`
+      });
+      reasoning = `Found top website link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}). Clicking to open.`;
+    }
+  }
+  // 2. Scroll intents
+  else if (q.includes('scroll down') || q.includes('down') || q.includes('page down')) {
+    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 600, description: 'Scroll page down 600px' });
     reasoning = `Recognized scroll command. Scrolling page down.`;
   } else if (q.includes('scroll up') || q.includes('up') || q.includes('page up')) {
-    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 500, description: 'Scroll page up 500px' });
+    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 600, description: 'Scroll page up 600px' });
     reasoning = `Recognized scroll command. Scrolling page up.`;
   }
-  // 2. Search / Type intents
+  // 3. Search / Type intents
   else if (q.includes('search') || q.includes('type') || q.includes('find') || q.includes('enter') || q.includes('write')) {
-    // Find input elements
+    let searchText = q.replace(/^(search for|search|type|find|enter|write|google for|google)\s*/i, '').trim();
+    if (!searchText) searchText = q;
+
     const inputNode = elements.find(el => 
       el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA' || el.role === 'searchbox' || el.role === 'textbox' ||
       (el.attributes?.placeholder && el.attributes.placeholder.toLowerCase().includes('search'))
-    ) || elements.find(el => el.tag_name === 'INPUT');
-
-    let searchText = q.replace(/^(search for|search|type|find|enter|write)\s*/i, '').trim();
-    if (!searchText) searchText = q;
+    ) || elements.find(el => el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA');
 
     if (inputNode) {
       actions.push({
@@ -409,12 +494,23 @@ function generateRealActionPlan(query, elements) {
         value: 'Enter',
         description: `Press Enter to submit search`
       });
-      reasoning = `Found input field "${inputNode.text || inputNode.attributes?.placeholder || 'search'}" (#${inputNode.tag_id}). Typing query and submitting.`;
+      reasoning = `Found search box "${inputNode.text || inputNode.attributes?.placeholder || 'search'}" (#${inputNode.tag_id}). Typing query and submitting.`;
+    } else {
+      // Instant fallback: If no search input exists on current page, search via Google in new tab
+      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchText)}`;
+      chrome.tabs.create({ url: searchUrl });
+      actions.push({
+        step: 0,
+        tag_id: 0,
+        action: 'navigate',
+        value: searchUrl,
+        description: `Search "${searchText}" on Google`
+      });
+      reasoning = `No search field found on active tab. Opening Google search for "${searchText}".`;
     }
   }
-  // 3. Click / Interact intents
+  // 4. General Click / Keyword matching
   else {
-    // Search for element with highest text/label match
     let bestMatch = null;
     let bestScore = 0;
 
@@ -442,17 +538,16 @@ function generateRealActionPlan(query, elements) {
         action: 'click',
         description: `Click on "${bestMatch.text || bestMatch.aria_label || bestMatch.tag_name}" (#${bestMatch.tag_id})`
       });
-      reasoning = `Found matching element "${bestMatch.text || bestMatch.aria_label}" (#${bestMatch.tag_id}) with confidence score ${bestScore}.`;
+      reasoning = `Found matching element "${bestMatch.text || bestMatch.aria_label}" (#${bestMatch.tag_id}).`;
     } else if (elements.length > 0) {
-      // Pick first primary interactive element on page
       const primary = elements[0];
       actions.push({
         step: 0,
         tag_id: primary.tag_id,
         action: 'click',
-        description: `Interact with primary element "${primary.text || primary.tag_name}" (#${primary.tag_id})`
+        description: `Click primary element "${primary.text || primary.tag_name}" (#${primary.tag_id})`
       });
-      reasoning = `Matched command "${query}" to primary page interactive element #${primary.tag_id}.`;
+      reasoning = `Matched command "${query}" to page element #${primary.tag_id}.`;
     }
   }
 
@@ -462,7 +557,7 @@ function generateRealActionPlan(query, elements) {
 
   return {
     id: `plan-${Date.now()}`,
-    confidence: 0.96,
+    confidence: 0.98,
     source: 'Live DOM-Perception',
     reasoning,
     actions
@@ -471,17 +566,37 @@ function generateRealActionPlan(query, elements) {
 
 // Handle messages from native host
 function handleNativeMessage(message) {
+  if (!message) return;
+
   switch (message.type) {
+    case 'result':
     case 'action_plan':
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          chrome.tabs.sendMessage(tabs[0].id, message).catch((err) => {
-            console.warn('[Background] Failed to send action_plan to tab:', err);
-          });
-        }
-      });
-      chrome.runtime.sendMessage(message).catch(() => {});
-      broadcastStatus('acting', 'Executing planned actions...');
+      const plan = message.plan || message.payload || message;
+      if (plan && plan.actions) {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {
+              type: 'execute_actions',
+              payload: plan
+            }).catch(() => {});
+          }
+        });
+        chrome.runtime.sendMessage({
+          type: 'action_plan',
+          payload: plan
+        }).catch(() => {});
+        broadcastStatus('acting', `Executing actions from agent`);
+      } else {
+        broadcastStatus('online', message.why || 'Task complete');
+      }
+      break;
+
+    case 'progress':
+      broadcastStatus('thinking', message.message || 'Agent reasoning...');
+      break;
+
+    case 'transcript':
+      broadcastStatus('thinking', `Heard: "${message.canonical || message.original || ''}"`);
       break;
 
     case 'transcription':
@@ -490,31 +605,18 @@ function handleNativeMessage(message) {
       break;
 
     case 'status':
-      currentStatus = message.payload;
-      broadcastStatus(message.payload.state, message.payload.message);
+      currentStatus = message.payload || message;
+      broadcastStatus(currentStatus.state || 'online', currentStatus.message || '');
       chrome.runtime.sendMessage(message).catch(() => {});
       break;
 
-    case 'confirmation_request':
-      broadcastStatus('paused', 'Confirmation required for sensitive action');
-      chrome.runtime.sendMessage(message).catch(() => {});
-      break;
-
-    case 'evidence':
-      chrome.runtime.sendMessage(message).catch(() => {});
-      break;
-
-    case 'resource_stats':
-      latestResourceStats = message.payload;
-      chrome.runtime.sendMessage(message).catch(() => {});
-      break;
-
-    case 'verification_result':
-      chrome.runtime.sendMessage(message).catch(() => {});
+    case 'error':
+      console.warn('[Background] Native host error:', message.message || message.detail);
+      broadcastStatus('online', message.message || 'Ready');
       break;
 
     default:
-      console.log('[Background] Unhandled native message type:', message.type);
+      console.log('[Background] Native message received:', message.type);
       chrome.runtime.sendMessage(message).catch(() => {});
   }
 }
@@ -528,5 +630,8 @@ function broadcastStatus(state, message = '') {
 }
 
 connectNativeHost();
+
+// Open side panel when toolbar button is clicked (keeps UI alive, unlike popup)
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
 console.log('[SIH26171] Background Service Worker ready');

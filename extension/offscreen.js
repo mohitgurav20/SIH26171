@@ -90,65 +90,6 @@ async function cropImagePatch(payload) {
   });
 }
 
-let offscreenSpeechRec = null;
-
-function startOffscreenSpeechRecognition() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) return;
-
-  try {
-    if (offscreenSpeechRec) {
-      try { offscreenSpeechRec.stop(); } catch(e) {}
-    }
-
-    offscreenSpeechRec = new SpeechRecognition();
-    offscreenSpeechRec.continuous = true;
-    offscreenSpeechRec.interimResults = true;
-    offscreenSpeechRec.lang = navigator.language || 'en-IN';
-
-    offscreenSpeechRec.onresult = (event) => {
-      let interimText = '';
-      let finalText = '';
-      for (let i = 0; i < event.results.length; i++) {
-        const res = event.results[i];
-        if (res.isFinal) {
-          finalText += res[0].transcript + ' ';
-        } else {
-          interimText += res[0].transcript;
-        }
-      }
-      const fullTranscript = (finalText + interimText).trim();
-      if (fullTranscript) {
-        chrome.runtime.sendMessage({
-          type: 'speech_live_transcript',
-          text: fullTranscript
-        }).catch(() => {});
-      }
-    };
-
-    offscreenSpeechRec.onerror = (event) => {
-      console.warn('[Offscreen] Speech recognition event error:', event.error);
-    };
-
-    offscreenSpeechRec.onend = () => {
-      if (audioStream && offscreenSpeechRec) {
-        try { offscreenSpeechRec.start(); } catch(e) {}
-      }
-    };
-
-    offscreenSpeechRec.start();
-  } catch (err) {
-    console.warn('[Offscreen] Failed to start SpeechRecognition:', err);
-  }
-}
-
-function stopOffscreenSpeechRecognition() {
-  if (offscreenSpeechRec) {
-    try { offscreenSpeechRec.stop(); } catch(e) {}
-    offscreenSpeechRec = null;
-  }
-}
-
 /**
  * Start capturing microphone stream and downsample to 16kHz PCM
  */
@@ -157,8 +98,8 @@ async function startAudioRecording() {
   try {
     audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (err) {
-    console.warn('[Offscreen] getUserMedia failed, opening permission tab:', err.message);
-    chrome.tabs.create({ url: 'permission.html' });
+    console.warn('[Offscreen] getUserMedia failed:', err.message);
+    chrome.runtime.sendMessage({ type: 'request_permission_tab' }).catch(() => {});
     throw new Error('Microphone permission required. Please allow access in the opened tab.');
   }
 

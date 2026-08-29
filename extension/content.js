@@ -375,8 +375,16 @@
       element.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
-    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-    element.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+    element.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+
+    // If part of a form, submit form directly
+    if (element.form && typeof element.form.requestSubmit === 'function') {
+      try { element.form.requestSubmit(); } catch(e) { element.form.submit(); }
+    } else if (element.form) {
+      try { element.form.submit(); } catch(e) {}
+    }
 
     await sleep(200);
     element.style.outline = prevOutline;

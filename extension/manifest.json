@@ -9,16 +9,20 @@
     "scripting",
     "storage",
     "tabs",
-    "offscreen"
+    "offscreen",
+    "nativeMessaging",
+    "sidePanel"
   ],
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   },
   "background": {
     "service_worker": "background.js"
@@ -38,7 +42,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["dom-worker.js"],
+      "resources": ["dom-worker.js", "permission.html", "permission.js", "popup.html", "offscreen.html"],
       "matches": ["<all_urls>"]
     }
   ],

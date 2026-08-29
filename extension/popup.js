@@ -166,19 +166,122 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Local Speech Recognition Setup
-  function startPopupSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      console.warn('[Popup] Web Speech API not supported in this browser context');
-      return;
+  // Voice Mic Toggle & Speech Coordination
+  let speechSilenceTimer = null;
+
+  function handleSpeechTranscriptUpdate(text) {
+    if (!text) return;
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    if (liveTranscript) {
+      liveTranscript.textContent = cleanText;
+      liveTranscript.classList.add('has-text');
     }
+    commandInput.value = cleanText;
+
+    // Auto-execute after 1.5s pause
+    if (speechSilenceTimer) clearTimeout(speechSilenceTimer);
+    speechSilenceTimer = setTimeout(() => {
+      if (isRecording && commandInput.value.trim().length > 2) {
+        console.log('[Popup] Voice silence auto-submit:', commandInput.value);
+        handleToggleMic();
+      }
+    }, 1500);
+  }
+
+  async function handleToggleMic() {
+    if (speechSilenceTimer) {
+      clearTimeout(speechSilenceTimer);
+      speechSilenceTimer = null;
+    }
+
+    if (!isRecording) {
+      isRecording = true;
+      micBtn.classList.add('recording');
+      voiceRecordingBar.classList.remove('hidden');
+      if (micStatusLabel) micStatusLabel.textContent = '🔴 Listening... Speak clearly now';
+      recordingStartTime = Date.now();
+
+      // Reset live transcript
+      if (liveTranscript) {
+        liveTranscript.textContent = 'Listening to your voice...';
+        liveTranscript.classList.remove('has-text');
+      }
+
+      // Start dynamic wave visualizer
+      if (waveAnimInterval) clearInterval(waveAnimInterval);
+      waveAnimInterval = setInterval(() => {
+        if (!isRecording) { clearInterval(waveAnimInterval); return; }
+        const waves = voiceRecordingBar.querySelectorAll('.wave-visualizer span');
+        waves.forEach((s) => {
+          const h = 4 + Math.round(Math.random() * 14);
+          s.style.height = `${h}px`;
+        });
+      }, 90);
+
+      // Start recording timer
+      if (recordingInterval) clearInterval(recordingInterval);
+      recordingInterval = setInterval(() => {
+        const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
+        const min = Math.floor(elapsedSec / 60);
+        const sec = elapsedSec % 60;
+        if (recordingTimer) {
+          recordingTimer.textContent = `${min}:${sec < 10 ? '0' : ''}${sec}`;
+        }
+      }, 500);
+
+      // Trigger speech recognition in active tab
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'start_speech_recognition' }, (res) => {
+            if (chrome.runtime.lastError || !res?.success) {
+              console.log('[Popup] Content speech fallback to local speech engine');
+              startLocalSpeechFallback();
+            }
+          });
+        } else {
+          startLocalSpeechFallback();
+        }
+      });
+    } else {
+      // Stop recording
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      voiceRecordingBar.classList.add('hidden');
+      if (micStatusLabel) micStatusLabel.textContent = 'Tap to speak in English, Hindi, or Kannada';
+      if (recordingInterval) clearInterval(recordingInterval);
+      if (waveAnimInterval) clearInterval(waveAnimInterval);
+
+      // Stop speech recognition across tabs
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'stop_speech_recognition' }).catch(() => {});
+        }
+      });
+      stopLocalSpeechFallback();
+
+      // Submit recognized text if present
+      const capturedText = commandInput.value.trim();
+      if (capturedText && !capturedText.toLowerCase().startsWith('listening') && capturedText.length > 1) {
+        reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
+        handleSendCommand();
+      } else {
+        reasoningBox.innerHTML = `<em>No speech recognized. Tap mic and try speaking clearly, or type below.</em>`;
+      }
+
+      updateStatus('online', 'Agent Ready');
+    }
+  }
+
+  function startLocalSpeechFallback() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
 
     try {
       if (localSpeechRec) {
-        try { localSpeechRec.stop(); } catch(e) {}
+        try { localSpeechRec.abort(); } catch(e) {}
       }
-
       localSpeechRec = new SpeechRecognition();
       localSpeechRec.continuous = true;
       localSpeechRec.interimResults = true;
@@ -195,111 +298,22 @@ document.addEventListener('DOMContentLoaded', () => {
             interimText += res[0].transcript;
           }
         }
-        const fullTranscript = (finalText + interimText).trim();
-        if (fullTranscript) {
-          if (liveTranscript) {
-            liveTranscript.textContent = fullTranscript;
-            liveTranscript.classList.add('has-text');
-          }
-          commandInput.value = fullTranscript;
-        }
+        handleSpeechTranscriptUpdate(finalText + interimText);
       };
 
       localSpeechRec.onerror = (e) => {
-        console.warn('[Popup] Speech Recognition error:', e.error);
-        if (e.error === 'not-allowed') {
-          chrome.tabs.create({ url: chrome.runtime.getURL('permission.html') });
-        }
-      };
-
-      localSpeechRec.onend = () => {
-        if (isRecording && localSpeechRec) {
-          try { localSpeechRec.start(); } catch(e) {}
-        }
+        console.warn('[Popup] Local speech fallback error:', e.error);
       };
 
       localSpeechRec.start();
-    } catch (err) {
-      console.warn('[Popup] Failed to start local SpeechRecognition:', err);
-    }
+    } catch(e) {}
   }
 
-  function stopPopupSpeechRecognition() {
+  function stopLocalSpeechFallback() {
     if (localSpeechRec) {
-      try { localSpeechRec.stop(); } catch(e) {}
+      const r = localSpeechRec;
       localSpeechRec = null;
-    }
-  }
-
-  // Voice Mic Toggle
-  async function handleToggleMic() {
-    if (!isRecording) {
-      isRecording = true;
-      micBtn.classList.add('recording');
-      voiceRecordingBar.classList.remove('hidden');
-      if (micStatusLabel) micStatusLabel.textContent = '🔴 Listening... Tap to finish';
-      recordingStartTime = Date.now();
-
-      // Reset live transcript
-      if (liveTranscript) {
-        liveTranscript.textContent = 'Listening to your voice...';
-        liveTranscript.classList.remove('has-text');
-      }
-
-      // Start dynamic wave visualizer
-      if (waveAnimInterval) clearInterval(waveAnimInterval);
-      waveAnimInterval = setInterval(() => {
-        if (!isRecording) { clearInterval(waveAnimInterval); return; }
-        const waves = voiceRecordingBar.querySelectorAll('.wave-visualizer span');
-        waves.forEach((s) => {
-          const h = 4 + Math.round(Math.random() * 12);
-          s.style.height = `${h}px`;
-        });
-      }, 100);
-
-      // Start recording timer
-      if (recordingInterval) clearInterval(recordingInterval);
-      recordingInterval = setInterval(() => {
-        const elapsedSec = Math.floor((Date.now() - recordingStartTime) / 1000);
-        const min = Math.floor(elapsedSec / 60);
-        const sec = elapsedSec % 60;
-        if (recordingTimer) {
-          recordingTimer.textContent = `${min}:${sec < 10 ? '0' : ''}${sec}`;
-        }
-      }, 500);
-
-      // Start speech recognition directly in popup
-      startPopupSpeechRecognition();
-
-      // Also trigger background & webpage speech recognition
-      chrome.runtime.sendMessage({ type: 'start_recording' }, (res) => {
-        if (res && res.error) {
-          console.warn('[Popup] start_recording response error:', res.error);
-        }
-      });
-    } else {
-      // Stop recording
-      isRecording = false;
-      micBtn.classList.remove('recording');
-      voiceRecordingBar.classList.add('hidden');
-      if (micStatusLabel) micStatusLabel.textContent = 'Tap to speak in English, Hindi, or Kannada';
-      if (recordingInterval) clearInterval(recordingInterval);
-      if (waveAnimInterval) clearInterval(waveAnimInterval);
-
-      // Stop speech recognition
-      stopPopupSpeechRecognition();
-
-      // Submit recognized text if present
-      const capturedText = commandInput.value.trim();
-      if (capturedText && !capturedText.startsWith('Listening')) {
-        reasoningBox.innerHTML = `<strong>Voice Command:</strong> "${escapeHtml(capturedText)}"`;
-        handleSendCommand();
-      } else {
-        reasoningBox.innerHTML = `<em>Audio captured. Processing on-device...</em>`;
-      }
-
-      updateStatus('online', 'Agent Ready');
-      chrome.runtime.sendMessage({ type: 'stop_recording' });
+      try { r.stop(); } catch(e) {}
     }
   }
 
@@ -347,7 +361,8 @@ document.addEventListener('DOMContentLoaded', () => {
       actions.forEach((act, idx) => {
         const stepNum = act.step !== undefined ? act.step : idx;
         const stepDiv = document.createElement('div');
-        stepDiv.className = 'step-item';
+        const isInstantDone = act.action === 'navigate';
+        stepDiv.className = isInstantDone ? 'step-item done' : 'step-item';
         stepDiv.id = `step-item-${stepNum}`;
 
         stepDiv.innerHTML = `
@@ -356,10 +371,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <span style="font-weight:600; font-size:10px; background:#ffe4e6; color:#e11d48; padding:1px 5px; border-radius:4px;">${act.action || 'ACTION'}</span>
             <span>${escapeHtml(act.description || act.value || '')}</span>
           </div>
-          <span class="step-badge" id="step-badge-${stepNum}" style="font-size:10px; font-weight:700; color:#6b7280;">Queued</span>
+          <span class="step-badge" id="step-badge-${stepNum}" style="font-size:10px; font-weight:700; color:${isInstantDone ? '#059669' : '#6b7280'};">${isInstantDone ? 'Done ✓' : 'Queued'}</span>
         `;
         planStepsList.appendChild(stepDiv);
       });
+      if (actions.some(a => a.action === 'navigate')) {
+        updateStatus('online', 'Task Complete ✓');
+      }
     }
   }
 
