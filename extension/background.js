@@ -408,12 +408,13 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
 
   // 2. Instant Navigation / Open Website intents (< 10ms)
-  // Matches: "open BMS it website", "open google summer of code", "go to github", "visit youtube"
-  const navMatch = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
+  // Matches: "open BMS it website", "BMS it website", "google summer of code website", "go to github", "visit youtube"
+  const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
+  const isWebsiteSuffix = cleanQ.match(/^(.+?)\s+(?:website|site|page|portal|url|link)$/i);
 
-  if (navMatch) {
-    let rawTarget = navMatch[1].trim();
-    rawTarget = rawTarget.replace(/\s+(?:website|site|page|url|link)$/i, '').trim();
+  if (isExplicitNav || isWebsiteSuffix) {
+    let rawTarget = (isExplicitNav ? isExplicitNav[1] : isWebsiteSuffix[1]).trim();
+    rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
     let targetUrl;
 
     const KNOWN_SITES = {
@@ -429,6 +430,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       'google summer of code': 'https://summerofcode.withgoogle.com',
       'bmsit': 'https://bmsit.ac.in',
       'bms it': 'https://bmsit.ac.in',
+      'bms': 'https://bmsit.ac.in',
       'bms institute of technology': 'https://bmsit.ac.in'
     };
 
@@ -552,15 +554,18 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
         description: `Click on "${bestMatch.text || bestMatch.aria_label || bestMatch.tag_name}" (#${bestMatch.tag_id})`
       });
       reasoning = `Found matching element "${bestMatch.text || bestMatch.aria_label}" (#${bestMatch.tag_id}).`;
-    } else if (elements.length > 0) {
-      const primary = elements[0];
+    } else {
+      // Universal fallback: Open search in new tab
+      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(cleanQ)}`;
+      chrome.tabs.create({ url: searchUrl });
       actions.push({
         step: 0,
-        tag_id: primary.tag_id,
-        action: 'click',
-        description: `Click primary element "${primary.text || primary.tag_name}" (#${primary.tag_id})`
+        tag_id: 0,
+        action: 'navigate',
+        value: searchUrl,
+        description: `Search "${cleanQ}" on Google`
       });
-      reasoning = `Matched command "${query}" to page element #${primary.tag_id}.`;
+      reasoning = `Opening web search for "${cleanQ}".`;
     }
   }
 
