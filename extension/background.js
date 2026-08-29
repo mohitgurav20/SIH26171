@@ -598,8 +598,125 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   }
 
   // =========================================================================
+  // PRIORITY 2.5: Smart Form Field Fill — "enter [field] [value]", "type [value] in [field]", "fill [field] with [value]"
+  // This MUST be before the generic click matcher so input fields are typed into, not clicked.
+  // =========================================================================
+  const FORM_FILL_PATTERNS = [
+    // "enter repository name airtel"   → field="repository name", value="airtel"
+    /^(?:enter|type|write|input|fill in|put in|set)\s+(?:the\s+)?(.+?)\s+(?:field\s+)?(?:as|with|to|value|is)?\s*["\s]?([^\s"]+(?:\s+[^\s]+)*?)["\s]?$/i,
+    // "type airtel in the repository name field" → value="airtel", field="repository name"
+    /^(?:type|write|enter|input)\s+([^\s]+(?:\s+[^\s]+)?)\s+(?:in(?:to)?|inside)\s+(?:the\s+)?(.+?)(?:\s+field|\s+box|\s+input)?$/i,
+    // "fill repository name with airtel"  → field="repository name", value="airtel"
+    /^(?:fill|complete|populate)\s+(?:the\s+)?(.+?)\s+(?:field\s+)?(?:with|as|to|=)\s+(.+)$/i,
+    // "set repository name to airtel"  → field="repository name", value="airtel"
+    /^(?:set|change|update)\s+(?:the\s+)?(.+?)\s+(?:field\s+)?(?:to|as|=)\s+(.+)$/i,
+  ];
+
+  // Only run if command has "enter/type/write/fill/set" and there are input elements
+  const hasFormIntent = /^(?:enter|type|write|input|fill|set|change|update|put)\b/i.test(cleanQ);
+  if (hasFormIntent && elements.length > 0) {
+    const inputEls = elements.filter(el =>
+      el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA' ||
+      el.role === 'textbox' || el.role === 'searchbox' || el.role === 'spinbutton'
+    );
+
+    if (inputEls.length > 0) {
+      let fieldName = null;
+      let typeValue = null;
+
+      for (const pattern of FORM_FILL_PATTERNS) {
+        const m = cleanQ.match(pattern);
+        if (m) {
+          // Pattern 2 ("type VALUE into FIELD") has swapped groups
+          if (pattern.source.startsWith('^(?:type|write|enter|input)\\s+([^\\s]')) {
+            typeValue = m[1].trim();
+            fieldName = m[2].trim().replace(/\s*(field|box|input|area)$/i, '').trim();
+          } else {
+            fieldName = m[1].trim().replace(/\s*(field|box|input|area)$/i, '').trim();
+            typeValue = m[2].trim();
+          }
+          break;
+        }
+      }
+
+      // Fallback: "enter WORD1 WORD2..." → last word(s) are value, first word(s) are field name
+      if (!fieldName && cleanQ.match(/^(?:enter|type|write|input)\s+\S+(\s+\S+)+/i)) {
+        const parts = cleanQ.replace(/^(?:enter|type|write|input)\s+/i, '').trim().split(/\s+/);
+        if (parts.length >= 2) {
+          // Heuristic: try field=first word(s), value=last word — if first words match an input label
+          // Try longest possible field name match
+          let matched = false;
+          for (let splitAt = parts.length - 1; splitAt >= 1; splitAt--) {
+            const candidateField = parts.slice(0, splitAt).join(' ');
+            const candidateValue = parts.slice(splitAt).join(' ');
+            const matchScore = inputEls.map(el => {
+              const label = (el.text || el.aria_label || el.placeholder || el.attributes?.placeholder || el.name || '').toLowerCase();
+              return { el, score: candidateField.split(' ').filter(w => label.includes(w) && w.length > 2).length };
+            }).sort((a, b) => b.score - a.score)[0];
+            if (matchScore && matchScore.score > 0) {
+              fieldName = candidateField;
+              typeValue = candidateValue;
+              matched = true;
+              break;
+            }
+          }
+          // If nothing matched field labels, treat last word as value, rest as field
+          if (!matched && parts.length >= 2) {
+            fieldName = parts.slice(0, -1).join(' ');
+            typeValue = parts[parts.length - 1];
+          }
+        }
+      }
+
+      if (fieldName && typeValue) {
+        // Score each input element against the extracted field name
+        const fieldWords = fieldName.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+        let bestInput = null;
+        let bestInputScore = 0;
+
+        for (const el of inputEls) {
+          const label = (el.text || el.aria_label || el.placeholder ||
+                         el.attributes?.placeholder || el.attributes?.name ||
+                         el.attributes?.id || '').toLowerCase();
+          let score = 0;
+          for (const w of fieldWords) {
+            if (label.includes(w)) score += 30;
+          }
+          // Exact label match bonus
+          if (label.includes(fieldName.toLowerCase())) score += 50;
+          // Prefer visible non-disabled fields
+          if (!el.disabled) score += 5;
+
+          if (score > bestInputScore) {
+            bestInputScore = score;
+            bestInput = el;
+          }
+        }
+
+        // If no field-name match, use first available input (generic fallback)
+        if (!bestInput && inputEls.length > 0) {
+          bestInput = inputEls[0];
+        }
+
+        if (bestInput && typeValue) {
+          actions.push({
+            step: 0,
+            tag_id: bestInput.tag_id,
+            action: 'type',
+            value: typeValue,
+            description: `Type "${typeValue}" into "${fieldName}" field (#${bestInput.tag_id})`
+          });
+          reasoning = `Detected form fill: entering "${typeValue}" into the "${fieldName}" field (#${bestInput.tag_id}).`;
+          return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
+        }
+      }
+    }
+  }
+
+  // =========================================================================
   // PRIORITY 3: On-Page Result Entry / Click / Choose / Select Matching Element (< 30ms)
   // Matches: "choose English language on the website", "click admissions", "get into isro", "select careers"
+  // IMPORTANT: Input/textarea elements are skipped here — handled above in Priority 2.5
   // =========================================================================
   if (elements.length > 0) {
     // Extract keywords
@@ -610,6 +727,11 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     let bestScore = 0;
 
     for (const el of elements) {
+      // Skip input/textarea elements — they should be typed into, not clicked
+      if (el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA' || el.role === 'textbox' || el.role === 'searchbox') {
+        continue;
+      }
+
       const elText = (el.text || el.aria_label || el.attributes?.title || el.attributes?.placeholder || el.name || '').toLowerCase();
       const elHref = (el.attributes?.href || '').toLowerCase();
       if (!elText && !elHref) continue;
@@ -656,21 +778,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   }
 
   // =========================================================================
-  // PRIORITY 3: Scroll intents (< 20ms)
-  // =========================================================================
-  if (cleanQ.includes('scroll down') || cleanQ.includes('down') || cleanQ.includes('page down')) {
-    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 600, description: 'Scroll page down 600px' });
-    reasoning = `Recognized scroll command. Scrolling page down.`;
-    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
-  } else if (cleanQ.includes('scroll up') || cleanQ.includes('up') || cleanQ.includes('page up')) {
-    actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 600, description: 'Scroll page up 600px' });
-    reasoning = `Recognized scroll command. Scrolling page up.`;
-    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
-  }
-
-  // =========================================================================
-  // PRIORITY 4: Type into on-page Search Input (< 30ms)
-  // If user says "search for X", "type X into search box"
+  // PRIORITY 4: Generic Type into any visible Input (< 30ms) — last resort for type commands
   // =========================================================================
   if (cleanQ.includes('search') || cleanQ.includes('type') || cleanQ.includes('find') || cleanQ.includes('enter') || cleanQ.includes('write')) {
     let searchText = cleanQ.replace(/^(?:search for|search|type|find|enter|write|google for|google)\s*/i, '').trim();
@@ -687,16 +795,16 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
         tag_id: inputNode.tag_id,
         action: 'type',
         value: searchText,
-        description: `Type "${searchText}" into <${inputNode.tag_name.toLowerCase()}> (#${inputNode.tag_id})`
+        description: `Type "${searchText}" into <${(inputNode.tag_name || 'input').toLowerCase()}> (#${inputNode.tag_id})`
       });
       actions.push({
         step: 1,
         tag_id: inputNode.tag_id,
         action: 'press_key',
         value: 'Enter',
-        description: `Press Enter to submit search`
+        description: `Press Enter to submit`
       });
-      reasoning = `Found search box "${inputNode.text || inputNode.attributes?.placeholder || 'search'}" (#${inputNode.tag_id}). Typing query and submitting on active page.`;
+      reasoning = `Found input field (#${inputNode.tag_id}). Typing query and submitting on active page.`;
       return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
     }
   }
