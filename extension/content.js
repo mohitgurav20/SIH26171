@@ -177,6 +177,9 @@
         if (child.nodeType === Node.TEXT_NODE) {
           directText += child.textContent;
         }
+      }
+      directText = directText.trim();
+
       let associatedLabel = '';
       if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.tagName === 'SELECT') {
         if (node.labels && node.labels.length > 0) {
