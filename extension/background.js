@@ -393,17 +393,27 @@ async function handleUserCommand(commandPayload) {
 // Generate Real Action Plan matching user query against actual webpage DOM elements
 function generateRealActionPlan(query, elements, currentUrl = '') {
   if (!query) return null;
-  const q = query.toLowerCase().trim();
   const actions = [];
   let reasoning = '';
 
-  // 1. Instant Navigation / Open Website intents (< 10ms)
-  // Handles: "can you open Google summer of code for me", "open youtube", "go to github", "visit wikipedia"
-  const navPattern = /^(?:can you\s+)?(?:please\s+)?(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|for\s+me|please))?$/i;
-  const navMatch = q.match(navPattern);
+  // 1. Conversational Query Normalizer: strip conversational filler words (e.g. "hey", "can you", "please", "bro")
+  let cleanQ = query.toLowerCase().trim();
+  let prevQ;
+  do {
+    prevQ = cleanQ;
+    cleanQ = cleanQ.replace(/^(?:hey|hi|hello|ok|okay|aero|please|can you|could you|would you|i want to|help me|just|bro|agent)\s+/i, '').trim();
+  } while (cleanQ !== prevQ);
+
+  // Strip conversational suffixes
+  cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
+
+  // 2. Instant Navigation / Open Website intents (< 10ms)
+  // Matches: "open BMS it website", "open google summer of code", "go to github", "visit youtube"
+  const navMatch = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
 
   if (navMatch) {
-    const rawTarget = navMatch[1].trim();
+    let rawTarget = navMatch[1].trim();
+    rawTarget = rawTarget.replace(/\s+(?:website|site|page|url|link)$/i, '').trim();
     let targetUrl;
 
     const KNOWN_SITES = {
@@ -416,7 +426,10 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       'chatgpt': 'https://chat.openai.com',
       'isro': 'https://www.isro.gov.in',
       'gsoc': 'https://summerofcode.withgoogle.com',
-      'google summer of code': 'https://summerofcode.withgoogle.com'
+      'google summer of code': 'https://summerofcode.withgoogle.com',
+      'bmsit': 'https://bmsit.ac.in',
+      'bms it': 'https://bmsit.ac.in',
+      'bms institute of technology': 'https://bmsit.ac.in'
     };
 
     const lowerTarget = rawTarget.toLowerCase();
@@ -438,11 +451,11 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     });
     reasoning = `Opening "${rawTarget}" in a new tab.`;
   }
-  // 2. "Get into the website" / "Click search result" / "Open first link"
-  else if (q.includes('get into') || q.includes('into the website') ||
-    q.includes('first result') || q.includes('first link') || q.includes('search result') ||
-    q.includes('open result') || q.includes('go to website') || q.includes('visit') ||
-    q.includes('click result') || q.includes('open this')) {
+  // 3. "Get into the website" / "Click search result" / "Open first link"
+  else if (cleanQ.includes('get into') || cleanQ.includes('into the website') ||
+    cleanQ.includes('first result') || cleanQ.includes('first link') || cleanQ.includes('search result') ||
+    cleanQ.includes('open result') || cleanQ.includes('go to website') || cleanQ.includes('visit') ||
+    cleanQ.includes('click result') || cleanQ.includes('open this')) {
     // Find primary link or search result
     const linkElement = elements.find(el => 
       (el.role === 'link' || el.tag_name === 'A') &&
@@ -461,18 +474,18 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       reasoning = `Found top website link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}). Clicking to open.`;
     }
   }
-  // 2. Scroll intents
-  else if (q.includes('scroll down') || q.includes('down') || q.includes('page down')) {
+  // 4. Scroll intents
+  else if (cleanQ.includes('scroll down') || cleanQ.includes('down') || cleanQ.includes('page down')) {
     actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 600, description: 'Scroll page down 600px' });
     reasoning = `Recognized scroll command. Scrolling page down.`;
-  } else if (q.includes('scroll up') || q.includes('up') || q.includes('page up')) {
+  } else if (cleanQ.includes('scroll up') || cleanQ.includes('up') || cleanQ.includes('page up')) {
     actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 600, description: 'Scroll page up 600px' });
     reasoning = `Recognized scroll command. Scrolling page up.`;
   }
-  // 3. Search / Type intents
-  else if (q.includes('search') || q.includes('type') || q.includes('find') || q.includes('enter') || q.includes('write')) {
-    let searchText = q.replace(/^(search for|search|type|find|enter|write|google for|google)\s*/i, '').trim();
-    if (!searchText) searchText = q;
+  // 5. Search / Type intents
+  else if (cleanQ.includes('search') || cleanQ.includes('type') || cleanQ.includes('find') || cleanQ.includes('enter') || cleanQ.includes('write') || cleanQ.includes('google')) {
+    let searchText = cleanQ.replace(/^(?:search for|search|type|find|enter|write|google for|google)\s*/i, '').trim();
+    if (!searchText) searchText = cleanQ;
 
     const inputNode = elements.find(el => 
       el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA' || el.role === 'searchbox' || el.role === 'textbox' ||
