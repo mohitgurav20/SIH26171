@@ -185,11 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       case 'speech_live_transcript':
         if (message.text) {
-          if (liveTranscript) {
-            liveTranscript.textContent = message.text;
-            liveTranscript.classList.add('has-text');
-          }
-          commandInput.value = message.text;
+          handleSpeechTranscriptUpdate(message.text);
         }
         break;
 
@@ -311,16 +307,34 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 500);
 
       // Trigger speech recognition in active tab
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'start_speech_recognition' }, (res) => {
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        let activeTab = tabs?.[0];
+        const triggerSpeech = (tabId) => {
+          chrome.tabs.sendMessage(tabId, { type: 'start_speech_recognition' }, (res) => {
             if (chrome.runtime.lastError || !res?.success) {
-              console.log('[Popup] Content speech fallback to local speech engine');
+              console.log('[Popup] Injecting content script for speech...');
+              chrome.scripting.executeScript({
+                target: { tabId },
+                files: ['content.js']
+              }).then(() => {
+                setTimeout(() => {
+                  chrome.tabs.sendMessage(tabId, { type: 'start_speech_recognition' }).catch(() => startLocalSpeechFallback());
+                }, 100);
+              }).catch(() => startLocalSpeechFallback());
+            }
+          });
+        };
+
+        if (activeTab?.id) {
+          triggerSpeech(activeTab.id);
+        } else {
+          chrome.tabs.query({ active: true }, (fallbackTabs) => {
+            if (fallbackTabs?.[0]?.id) {
+              triggerSpeech(fallbackTabs[0].id);
+            } else {
               startLocalSpeechFallback();
             }
           });
-        } else {
-          startLocalSpeechFallback();
         }
       });
     } else {
@@ -333,7 +347,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (waveAnimInterval) clearInterval(waveAnimInterval);
 
       // Stop speech recognition across tabs
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+        if (tabs[0]?.id) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'stop_speech_recognition' }).catch(() => {});
+        }
+      });
+      chrome.tabs.query({ active: true }, (tabs) => {
         if (tabs[0]?.id) {
           chrome.tabs.sendMessage(tabs[0].id, { type: 'stop_speech_recognition' }).catch(() => {});
         }
