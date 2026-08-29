@@ -401,6 +401,64 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
 
   // 1. Normalize query: strip conversational filler words (English & Hindi/Hinglish)
   let cleanQ = query.toLowerCase().trim();
+
+  // =========================================================================
+  // PHONETIC CORRECTION MAP
+  // Web Speech API commonly mishears proper nouns. Fix before any intent logic.
+  // =========================================================================
+  const PHONETIC_FIXES = [
+    // GitHub (most common — "guitar", "get hub", "git hub", "get up", "github")
+    [/\bguitar\b/g,                   'github'],
+    [/\bget hub\b/g,                   'github'],
+    [/\bgit hub\b/g,                   'github'],
+    [/\bget up\b/g,                    'github'],
+    [/\bgithub\b/g,                    'github'],
+    // YouTube ("you tube", "utube", "u tube")
+    [/\byou\s*tube\b/g,                'youtube'],
+    [/\butube\b/g,                     'youtube'],
+    // GSOC ("gsock", "g soc", "g sock", "google summer of cord", "google soc")
+    [/\bgsock\b/g,                     'gsoc'],
+    [/\bg\s+soc\b/g,                   'gsoc'],
+    [/\bg\s+sock\b/g,                  'gsoc'],
+    [/\bgoogle summer of cord\b/g,     'google summer of code'],
+    [/\bgoogle summer of cod\b/g,      'google summer of code'],
+    [/\bgoogle summer code\b/g,        'google summer of code'],
+    // ISRO ("is ro", "is arrow", "is roe", "i s r o")
+    [/\bis\s+ro\b/g,                   'isro'],
+    [/\bis\s+arrow\b/g,                'isro'],
+    [/\bis\s+roe\b/g,                  'isro'],
+    [/\bi\s+s\s+r\s+o\b/g,             'isro'],
+    // BMSIT ("bms eat", "bms it", "b m s i t", "bmsit")
+    [/\bbms\s+eat\b/g,                 'bmsit'],
+    [/\bb\s*m\s*s\s*i\s*t\b/g,         'bmsit'],
+    // LinkedIn ("linked in", "link din", "link thin")
+    [/\blinked\s+in\b/g,               'linkedin'],
+    [/\blink\s*din\b/g,                'linkedin'],
+    [/\blink\s*thin\b/g,               'linkedin'],
+    // Instagram ("insta gram", "insta")
+    [/\binsta\s+gram\b/g,              'instagram'],
+    // WhatsApp ("what sap", "whats app", "what's app")
+    [/\bwhat\s*['']?s?\s*app\b/g,     'whatsapp'],
+    [/\bwhat\s+sap\b/g,               'whatsapp'],
+    // Stack Overflow ("stack over flow")
+    [/\bstack\s+over\s+flow\b/g,      'stack overflow'],
+    // Twitter/X
+    [/\btwitter\b/g,                   'twitter'],
+    // ChatGPT ("chat g p t", "chat gbt", "chat gpt")
+    [/\bchat\s+g\s*b\s*t\b/g,         'chatgpt'],
+    [/\bchat\s+g\s+p\s+t\b/g,         'chatgpt'],
+    // Google Maps ("google map", "google mapes")
+    [/\bgoogle\s+map[se]?\b/g,        'google maps'],
+    // Scroll commands ("scroll don" / "scroll dawn")
+    [/\bscroll\s+don\b/g,             'scroll down'],
+    [/\bscroll\s+dawn\b/g,            'scroll down'],
+    [/\bscroll\s+app\b/g,             'scroll up'],
+  ];
+
+  for (const [pattern, fix] of PHONETIC_FIXES) {
+    cleanQ = cleanQ.replace(pattern, fix);
+  }
+
   let prevQ;
   do {
     prevQ = cleanQ;
@@ -413,6 +471,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     prevSuff = cleanQ;
     cleanQ = cleanQ.replace(/\s+(?:nikal kar de sakte ho|nikal kar do|nikal ke do|nikal do|khol kar do|khol ke do|khol do|kholo|open kar do|open karo|open karke do|dikha do|dikhao|search kar do|search karo|de sakte ho|kar sakte ho|karo|chahiye|for me|for us|please|now|fast)$/i, '').trim();
   } while (cleanQ !== prevSuff);
+
 
   // =========================================================================
   // PRIORITY 0: Browser Control & History ("go back", "refresh", "reload")
@@ -660,7 +719,30 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     'bmsit': 'https://bmsit.ac.in',
     'bms it': 'https://bmsit.ac.in',
     'bms': 'https://bmsit.ac.in',
-    'bms institute of technology': 'https://bmsit.ac.in'
+    'bms institute of technology': 'https://bmsit.ac.in',
+    'linkedin': 'https://www.linkedin.com',
+    'instagram': 'https://www.instagram.com',
+    'twitter': 'https://www.twitter.com',
+    'x': 'https://www.x.com',
+    'netflix': 'https://www.netflix.com',
+    'amazon': 'https://www.amazon.in',
+    'flipkart': 'https://www.flipkart.com',
+    'stack overflow': 'https://stackoverflow.com',
+    'stackoverflow': 'https://stackoverflow.com',
+    'google maps': 'https://maps.google.com',
+    'maps': 'https://maps.google.com',
+    'whatsapp': 'https://web.whatsapp.com',
+    'discord': 'https://discord.com',
+    'notion': 'https://www.notion.so',
+    'figma': 'https://www.figma.com',
+    'medium': 'https://www.medium.com',
+    'hackerrank': 'https://www.hackerrank.com',
+    'leetcode': 'https://www.leetcode.com',
+    'codechef': 'https://www.codechef.com',
+    'codeforces': 'https://codeforces.com',
+    'moodle': 'https://moodle.org',
+    'nptel': 'https://nptel.ac.in',
+    'swayam': 'https://swayam.gov.in'
   };
 
   const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);

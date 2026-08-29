@@ -259,14 +259,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     commandInput.value = cleanText;
 
-    // Auto-execute after 1.5s pause
+    // Auto-execute after 5s pause — gives user time to finish speaking naturally
     if (speechSilenceTimer) clearTimeout(speechSilenceTimer);
     speechSilenceTimer = setTimeout(() => {
       if (isRecording && commandInput.value.trim().length > 2) {
-        console.log('[Popup] Voice silence auto-submit:', commandInput.value);
+        console.log('[Popup] Voice silence 5s auto-submit:', commandInput.value);
         handleToggleMic();
       }
-    }, 1500);
+    }, 5000);
   }
 
   async function handleToggleMic() {
