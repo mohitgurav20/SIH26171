@@ -399,16 +399,20 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   const actions = [];
   let reasoning = '';
 
-  // 1. Normalize query: strip conversational filler words (e.g. "hey", "can you", "please", "bro")
+  // 1. Normalize query: strip conversational filler words (English & Hindi/Hinglish)
   let cleanQ = query.toLowerCase().trim();
   let prevQ;
   do {
     prevQ = cleanQ;
-    cleanQ = cleanQ.replace(/^(?:hey|hi|hello|ok|okay|aero|please|can you|could you|would you|i want to|help me|just|bro|agent)\s+/i, '').trim();
+    cleanQ = cleanQ.replace(/^(?:hey|hi|hello|ok|okay|aero|please|can you|could you|would you|i want to|help me|just|bro|agent|tum mujhe|aap mujhe|mujhe|kya tum|kya aap|zara|ek baar|bhai|kripya)\s+/i, '').trim();
   } while (cleanQ !== prevQ);
 
-  // Strip conversational suffixes
-  cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
+  // Strip conversational suffixes (English & Hindi/Hinglish)
+  let prevSuff;
+  do {
+    prevSuff = cleanQ;
+    cleanQ = cleanQ.replace(/\s+(?:nikal kar de sakte ho|nikal kar do|nikal ke do|nikal do|khol kar do|khol ke do|khol do|kholo|open kar do|open karo|open karke do|dikha do|dikhao|search kar do|search karo|de sakte ho|kar sakte ho|karo|chahiye|for me|for us|please|now|fast)$/i, '').trim();
+  } while (cleanQ !== prevSuff);
 
   // =========================================================================
   // PRIORITY 0: Browser Control & History ("go back", "refresh", "reload")
@@ -639,57 +643,43 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   }
 
   // =========================================================================
-  // PRIORITY 5: Direct Website Domain Navigation (ONLY for explicit new site requests)
+  // PRIORITY 5: Direct Website Domain Navigation
+  // Matches: "open google summer of code", "google summer of code", "youtube", "go to github"
   // =========================================================================
+  const KNOWN_SITES = {
+    'youtube': 'https://www.youtube.com',
+    'google': 'https://www.google.com',
+    'github': 'https://www.github.com',
+    'wikipedia': 'https://www.wikipedia.org',
+    'reddit': 'https://www.reddit.com',
+    'gmail': 'https://mail.google.com',
+    'chatgpt': 'https://chat.openai.com',
+    'isro': 'https://www.isro.gov.in',
+    'gsoc': 'https://summerofcode.withgoogle.com',
+    'google summer of code': 'https://summerofcode.withgoogle.com',
+    'bmsit': 'https://bmsit.ac.in',
+    'bms it': 'https://bmsit.ac.in',
+    'bms': 'https://bmsit.ac.in',
+    'bms institute of technology': 'https://bmsit.ac.in'
+  };
+
   const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
-  if (isExplicitNav) {
-    let rawTarget = isExplicitNav[1].trim();
-    rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
-    let targetUrl;
+  let rawTarget = isExplicitNav ? isExplicitNav[1].trim() : cleanQ;
+  rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
 
-    const KNOWN_SITES = {
-      'youtube': 'https://www.youtube.com',
-      'google': 'https://www.google.com',
-      'github': 'https://www.github.com',
-      'wikipedia': 'https://www.wikipedia.org',
-      'reddit': 'https://www.reddit.com',
-      'gmail': 'https://mail.google.com',
-      'chatgpt': 'https://chat.openai.com',
-      'isro': 'https://www.isro.gov.in',
-      'gsoc': 'https://summerofcode.withgoogle.com',
-      'google summer of code': 'https://summerofcode.withgoogle.com',
-      'bmsit': 'https://bmsit.ac.in',
-      'bms it': 'https://bmsit.ac.in',
-      'bms': 'https://bmsit.ac.in',
-      'bms institute of technology': 'https://bmsit.ac.in'
-    };
-
-    const lowerTarget = rawTarget.toLowerCase();
-    if (KNOWN_SITES[lowerTarget]) {
-      targetUrl = KNOWN_SITES[lowerTarget];
-      chrome.tabs.create({ url: targetUrl });
-      actions.push({
-        step: 0,
-        tag_id: 0,
-        action: 'navigate',
-        value: targetUrl,
-        description: `Navigate to ${rawTarget}`
-      });
-      reasoning = `Opening "${rawTarget}" in a new tab.`;
-      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
-    } else if (rawTarget.includes('.') && !rawTarget.includes(' ')) {
-      targetUrl = rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`;
-      chrome.tabs.create({ url: targetUrl });
-      actions.push({
-        step: 0,
-        tag_id: 0,
-        action: 'navigate',
-        value: targetUrl,
-        description: `Navigate to ${rawTarget}`
-      });
-      reasoning = `Opening "${rawTarget}" in a new tab.`;
-      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
-    }
+  const lowerTarget = rawTarget.toLowerCase();
+  if (KNOWN_SITES[lowerTarget] || (isExplicitNav && rawTarget.includes('.') && !rawTarget.includes(' '))) {
+    let targetUrl = KNOWN_SITES[lowerTarget] || (rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`);
+    chrome.tabs.create({ url: targetUrl });
+    actions.push({
+      step: 0,
+      tag_id: 0,
+      action: 'navigate',
+      value: targetUrl,
+      description: `Navigate to ${rawTarget}`
+    });
+    reasoning = `Opening "${rawTarget}" in a new tab.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
   }
 
   // =========================================================================
