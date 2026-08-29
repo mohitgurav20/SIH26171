@@ -333,7 +333,25 @@ async function handleUserCommand(commandPayload) {
           domData = response.payload;
         }
       } catch (err) {
-        console.warn('[Background] Could not extract DOM via content script:', err);
+        console.warn('[Background] Content script not connected, auto-injecting into tab:', err);
+        if (activeTab.id && !activeTab.url?.startsWith('chrome://') && !activeTab.url?.startsWith('edge://')) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: activeTab.id },
+              files: ['content.js']
+            });
+            await new Promise(r => setTimeout(r, 120));
+            const retryRes = await chrome.tabs.sendMessage(activeTab.id, {
+              type: 'extract_dom',
+              render_overlays: false
+            });
+            if (retryRes && retryRes.payload) {
+              domData = retryRes.payload;
+            }
+          } catch(injectErr) {
+            console.warn('[Background] Script injection retry failed:', injectErr);
+          }
+        }
       }
 
       screenshot = await captureActiveTabScreenshot();
@@ -701,7 +719,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // =========================================================================
   if (elements.length > 0) {
     const searchTerms = cleanQ
-      .replace(/^(?:choose|select|pick|open|get into|into|go to|click on|click|visit|tap|login|enter)\s+(?:the\s+)?/i, '')
+      .replace(/^(?:choose|select|pick|open|get into|into|go to|click on|click|visit|tap|login|enter|create|make|add)\s+(?:the\s+)?(?:a\s+)?/i, '')
       .replace(/\s+(?:on the website|on website|on page|language|website|site|page|portal|url|link)$/i, '')
       .trim();
 
@@ -725,6 +743,11 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       if (searchTerms && elText.includes(searchTerms)) score += 60;
       if (elText.includes('privacy') || elText.includes('terms') || elText === 'google' || elText === 'sign in') score -= 40;
       if (el.role === 'button' || el.tag === 'button' || (el.role === 'link' && el.text?.length > 3) || el.tag === 'a') score += 10;
+
+      // Smart alias bonuses
+      if ((cleanQ.includes('repo') || cleanQ.includes('repository')) && (elText === 'new' || elHref === '/new' || elHref.endsWith('/new'))) {
+        score += 60;
+      }
 
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
