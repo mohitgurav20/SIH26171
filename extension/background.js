@@ -160,6 +160,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ status: 'processing' });
       break;
 
+    case 'clarification_reply':
+      handleClarificationReply(message.payload);
+      sendResponse({ status: 'processing' });
+      break;
+
     case 'audio':
       forwardToNativeHost(message);
       broadcastStatus('thinking', 'Transcribing audio...');
@@ -375,30 +380,56 @@ async function handleUserCommand(commandPayload) {
       raw_html_bytes: domData.raw_html_bytes || 0
     } : null;
 
-    // --- INSTANT ACTION EXECUTION ---
-    // Always generate instant reflex plan (works on New Tab, blank tabs, and live web pages)
     const elementsList = domData?.elements || [];
+
+    // --- UNIVERSAL AUTONOMOUS INTENT DETECTION ---
+    const detectedIntent = classifyIntent(commandPayload.text);
+    if (detectedIntent) {
+      const domFields = detectedIntent.id === 'FILL_FORM' ? extractFormFieldsFromDOM(elementsList) : [];
+      const clarification = buildClarificationRequest(detectedIntent, commandPayload.text, domFields);
+
+      // Store active task state
+      activeTask = {
+        intent: detectedIntent,
+        fields: clarification.fields,
+        elements: elementsList,
+        activeTab,
+        status: 'waiting_for_info',
+        originalQuery: commandPayload.text
+      };
+
+      // If all required info already in the command — execute immediately
+      if (!clarification.hasMissingRequired) {
+        activeTask.fields = clarification.fields.map(f => ({ ...f, value: f.prefilled || f.default || '' }));
+        await executeTaskWorkflow(activeTask);
+      } else {
+        // Ask user for missing info via Side Panel dialog
+        broadcastStatus('thinking', `I need a few details to ${detectedIntent.confirmPrompt.toLowerCase()}...`);
+        chrome.runtime.sendMessage({
+          type: 'clarification_request',
+          payload: clarification
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // --- INSTANT ACTION EXECUTION (reflex for simple commands) ---
     const instantPlan = generateRealActionPlan(commandPayload.text, elementsList, activeTab.url);
 
     if (instantPlan && instantPlan.actions.length > 0) {
-      // Send to content script to execute on the real webpage (if not a chrome:// page)
       if (activeTab.id && !activeTab.url?.startsWith('chrome://') && !activeTab.url?.startsWith('edge://')) {
         chrome.tabs.sendMessage(activeTab.id, {
           type: 'execute_actions',
           payload: instantPlan
         }).catch(() => {});
       }
-
-      // Broadcast immediately to popup
       chrome.runtime.sendMessage({
         type: 'action_plan',
         payload: instantPlan
       }).catch(() => {});
-
       broadcastStatus('online', `Completed: ${instantPlan.actions[0].description}`);
       return;
     } else if (instantPlan) {
-      // Broadcast even if 0 actions (e.g. Q&A or info)
       chrome.runtime.sendMessage({
         type: 'action_plan',
         payload: instantPlan
@@ -424,6 +455,331 @@ async function handleUserCommand(commandPayload) {
   }
 }
 
+// ============================================================================
+// UNIVERSAL AUTONOMOUS AGENT SYSTEM
+// One command → Ask only what's needed → Execute everything
+// ============================================================================
+
+// Active task state: persists across page navigations
+let activeTask = null;
+
+// Universal intent definitions — detects high-level goals on ANY website
+const UNIVERSAL_INTENTS = [
+  {
+    id: 'LOGIN',
+    patterns: [/\blog\s*in\b/i, /\bsign\s*in\b/i, /\blogin\b/i, /\benter\s*(my\s*)?account\b/i],
+    requiredFields: [
+      { key: 'username', label: 'Email or Username', type: 'text', optional: false },
+      { key: 'password', label: 'Password', type: 'password', optional: false }
+    ],
+    confirmPrompt: 'Log in with your credentials'
+  },
+  {
+    id: 'REGISTER',
+    patterns: [/\bregister\b/i, /\bsign\s*up\b/i, /\bcreate\s*account\b/i, /\bjoin\b/i],
+    requiredFields: [
+      { key: 'name', label: 'Full Name', type: 'text', optional: false },
+      { key: 'email', label: 'Email', type: 'text', optional: false },
+      { key: 'password', label: 'Password', type: 'password', optional: false },
+      { key: 'phone', label: 'Phone Number', type: 'text', optional: true }
+    ],
+    confirmPrompt: 'Register a new account'
+  },
+  {
+    id: 'CREATE_REPO',
+    patterns: [/\bcreate\s*(a\s*)?repo\b/i, /\bcreate\s*(a\s*)?repository\b/i, /\bnew\s*repo\b/i, /\bnew\s*repository\b/i],
+    siteHint: 'github.com',
+    requiredFields: [
+      { key: 'name', label: 'Repository Name', type: 'text', optional: false },
+      { key: 'description', label: 'Description', type: 'text', optional: true },
+      { key: 'visibility', label: 'Visibility (public/private)', type: 'text', optional: true, default: 'public' }
+    ],
+    navigationUrl: 'https://github.com/new',
+    confirmPrompt: 'Create a new GitHub repository'
+  },
+  {
+    id: 'SEARCH',
+    patterns: [/\bsearch\s+for\b/i, /\bfind\b/i, /\blook\s+for\b/i, /\bquery\b/i],
+    requiredFields: [
+      { key: 'query', label: 'What to search for', type: 'text', optional: false }
+    ],
+    confirmPrompt: 'Search on this page'
+  },
+  {
+    id: 'SEND_MESSAGE',
+    patterns: [/\bsend\s*(a\s*)?message\b/i, /\bcompose\b/i, /\bwrite\s*(an?\s*)?email\b/i, /\bemail\s+to\b/i],
+    requiredFields: [
+      { key: 'recipient', label: 'To (name or email)', type: 'text', optional: false },
+      { key: 'subject', label: 'Subject', type: 'text', optional: true },
+      { key: 'body', label: 'Message body', type: 'text', optional: false }
+    ],
+    confirmPrompt: 'Compose and send a message'
+  },
+  {
+    id: 'FILL_FORM',
+    patterns: [/\bfill\s*(this\s*)?form\b/i, /\bfill\s*(this\s*)?out\b/i, /\bcomplete\s*(the\s*)?form\b/i, /\bsubmit\s*(this\s*)?form\b/i],
+    requiredFields: [],  // Dynamically populated from page DOM
+    confirmPrompt: 'Fill and submit this form'
+  },
+  {
+    id: 'JOB_APPLY',
+    patterns: [/\bapply\s*(for\s*)?(this\s*)?job\b/i, /\bsubmit\s*application\b/i],
+    requiredFields: [
+      { key: 'name', label: 'Full Name', type: 'text', optional: false },
+      { key: 'email', label: 'Email', type: 'text', optional: false },
+      { key: 'phone', label: 'Phone Number', type: 'text', optional: true },
+      { key: 'experience', label: 'Years of experience', type: 'text', optional: true }
+    ],
+    confirmPrompt: 'Apply for this job'
+  },
+  {
+    id: 'CHECKOUT',
+    patterns: [/\bcheckout\b/i, /\bbuy\s*(this|now)?\b/i, /\bpurchase\b/i, /\bplace\s*order\b/i],
+    requiredFields: [
+      { key: 'name', label: 'Full Name', type: 'text', optional: false },
+      { key: 'address', label: 'Delivery Address', type: 'text', optional: false },
+      { key: 'pincode', label: 'PIN Code', type: 'text', optional: false },
+      { key: 'phone', label: 'Phone Number', type: 'text', optional: false }
+    ],
+    confirmPrompt: 'Complete checkout and place order'
+  },
+  {
+    id: 'BOOK',
+    patterns: [/\bbook\b/i, /\breserve\b/i, /\bschedule\b/i],
+    requiredFields: [
+      { key: 'date', label: 'Date', type: 'text', optional: false },
+      { key: 'destination', label: 'Destination / Venue', type: 'text', optional: true },
+      { key: 'passengers', label: 'Number of passengers/guests', type: 'text', optional: true, default: '1' }
+    ],
+    confirmPrompt: 'Make a booking or reservation'
+  },
+  {
+    id: 'POST_UPDATE',
+    patterns: [/\bpost\b/i, /\bshare\b/i, /\btweet\b/i, /\bpublish\b/i, /\bupload\b/i],
+    requiredFields: [
+      { key: 'content', label: 'What to post or share', type: 'text', optional: false }
+    ],
+    confirmPrompt: 'Post or publish content'
+  }
+];
+
+/**
+ * Detect the high-level intent from a user command
+ */
+function classifyIntent(query) {
+  for (const intent of UNIVERSAL_INTENTS) {
+    if (intent.patterns.some(p => p.test(query))) {
+      return intent;
+    }
+  }
+  return null;
+}
+
+/**
+ * For FILL_FORM intent: dynamically extract field names from the page DOM
+ */
+function extractFormFieldsFromDOM(elements) {
+  const isInputEl = (el) => el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select';
+  const inputEls = elements.filter(isInputEl).filter(el =>
+    el.type !== 'submit' && el.type !== 'button' && el.type !== 'checkbox' && el.type !== 'radio'
+  );
+  return inputEls.map(el => ({
+    key: (el.name || el.id || el.text || el.placeholder || `field_${el.tag_id}`).toLowerCase().replace(/\s+/g, '_'),
+    label: el.text || el.aria_label || el.placeholder || el.name || `Field ${el.tag_id}`,
+    type: el.type || 'text',
+    tag_id: el.tag_id,
+    optional: !el.required
+  }));
+}
+
+/**
+ * Build a clarification request to send to popup
+ * Asks only for fields NOT already in the command text
+ */
+function buildClarificationRequest(intent, query, domFields = []) {
+  const fields = intent.id === 'FILL_FORM' ? domFields : intent.requiredFields;
+
+  // Try to pre-extract values already mentioned in the command
+  const preExtracted = {};
+  fields.forEach(field => {
+    // Simple regex: look for field keyword followed by value
+    const patterns = [
+      new RegExp(`(?:${field.key.replace(/_/g, ' ')}|${field.label.toLowerCase()})\\s*[:=]?\\s*["']?([\\w@.+\\-]+)["']?`, 'i'),
+      new RegExp(`\\b(${field.label.toLowerCase().split(' ').join('|')})\\s+(\\S+)`, 'i')
+    ];
+    for (const p of patterns) {
+      const m = query.match(p);
+      if (m) { preExtracted[field.key] = m[1] || m[2]; break; }
+    }
+  });
+
+  // Only ask for truly missing required fields
+  const missing = fields.filter(f => !f.optional && !preExtracted[f.key]);
+  const optional = fields.filter(f => f.optional && !preExtracted[f.key]);
+
+  return {
+    intent: intent.id,
+    intentLabel: intent.confirmPrompt,
+    fields: fields.map(f => ({
+      ...f,
+      prefilled: preExtracted[f.key] || f.default || ''
+    })),
+    preExtracted,
+    hasMissingRequired: missing.length > 0,
+    missingRequired: missing,
+    optionalFields: optional
+  };
+}
+
+/**
+ * Execute a collected task with all fields filled
+ */
+async function executeTaskWorkflow(task) {
+  const { intent, fields, activeTab } = task;
+  broadcastStatus('thinking', `Executing: ${intent.confirmPrompt}...`);
+
+  // If the workflow requires navigation first, navigate then queue remaining steps
+  if (intent.navigationUrl && !activeTab.url.includes(new URL(intent.navigationUrl).hostname + new URL(intent.navigationUrl).pathname.slice(0, 8))) {
+    // Store pending steps to execute after navigation
+    activeTask.pendingPostNavSteps = buildWorkflowSteps(task);
+    activeTask.status = 'navigating';
+
+    chrome.tabs.update(activeTab.id, { url: intent.navigationUrl });
+    broadcastStatus('thinking', `Navigating to ${intent.navigationUrl}...`);
+    return;
+  }
+
+  // Execute all steps directly on current page
+  const steps = buildWorkflowSteps(task);
+  broadcastStatus('thinking', `Running ${steps.length} steps...`);
+
+  const plan = {
+    id: `workflow-${Date.now()}`,
+    confidence: 0.98,
+    source: 'Autonomous-Workflow',
+    reasoning: `Executing ${intent.confirmPrompt} with ${steps.length} steps`,
+    actions: steps
+  };
+
+  chrome.tabs.sendMessage(activeTab.id, {
+    type: 'execute_actions',
+    payload: plan
+  }).catch(() => {});
+
+  chrome.runtime.sendMessage({
+    type: 'action_plan',
+    payload: plan
+  }).catch(() => {});
+
+  activeTask.status = 'executing';
+  activeTask.currentPlan = plan;
+}
+
+/**
+ * Build ordered action steps from collected field data
+ */
+function buildWorkflowSteps(task) {
+  const steps = [];
+  const { fields, elements } = task;
+
+  // Type into all form fields in order
+  fields.forEach((field, idx) => {
+    if (!field.value) return;
+    const isInputEl = (el) => el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select';
+
+    // Find matching element in DOM
+    const el = (elements || []).find(e => {
+      if (!isInputEl(e)) return false;
+      const lbl = (e.text || e.aria_label || e.placeholder || e.name || '').toLowerCase();
+      return lbl.includes(field.key.replace(/_/g, ' ')) ||
+             lbl.includes(field.label.toLowerCase()) ||
+             field.label.toLowerCase().split(' ').some(w => w.length > 2 && lbl.includes(w));
+    });
+
+    if (el || field.tag_id) {
+      steps.push({
+        step: steps.length,
+        tag_id: field.tag_id || (el ? el.tag_id : 0),
+        action: 'type',
+        value: field.value,
+        description: `Fill "${field.label}" with "${field.value}"`
+      });
+    }
+  });
+
+  // Find and click submit button
+  const submitEl = (task.elements || []).find(el => {
+    const t = (el.text || '').toLowerCase();
+    return (el.tag === 'button' || el.role === 'button') &&
+           (t.includes('submit') || t.includes('create') || t.includes('register') ||
+            t.includes('sign up') || t.includes('login') || t.includes('send') ||
+            t.includes('apply') || t.includes('continue') || t.includes('next') ||
+            t.includes('checkout') || t.includes('place order') || t.includes('book') ||
+            t.includes('post') || t.includes('publish') || t.includes('save'));
+  });
+
+  if (submitEl) {
+    steps.push({
+      step: steps.length,
+      tag_id: submitEl.tag_id,
+      action: 'click',
+      description: `Click "${submitEl.text || 'Submit'}" to complete`
+    });
+  }
+
+  return steps;
+}
+
+/**
+ * Handle user's reply to a clarification dialog
+ */
+async function handleClarificationReply(payload) {
+  if (!activeTask) return;
+
+  // Merge user-provided values into task fields
+  activeTask.fields = activeTask.fields.map(f => ({
+    ...f,
+    value: payload.values[f.key] !== undefined ? payload.values[f.key] : f.prefilled || ''
+  }));
+
+  // Get current tab fresh
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  activeTask.activeTab = tabs?.[0] || activeTask.activeTab;
+  activeTask.status = 'ready';
+
+  await executeTaskWorkflow(activeTask);
+}
+
+// Tab navigation relay: when a tab finishes loading, check if we have pending steps
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  if (!activeTask || activeTask.status !== 'navigating') return;
+  if (!activeTask.pendingPostNavSteps?.length) return;
+
+  // Small delay for page JS to initialize
+  setTimeout(async () => {
+    try {
+      // Re-extract DOM from the new page
+      const response = await chrome.tabs.sendMessage(tabId, {
+        type: 'extract_dom',
+        render_overlays: false
+      });
+      const elements = response?.payload?.elements || [];
+      activeTask.elements = elements;
+      activeTask.activeTab = tab;
+      activeTask.status = 'ready';
+      await executeTaskWorkflow(activeTask);
+    } catch (e) {
+      console.warn('[Background] Post-navigation DOM extraction failed:', e);
+      // Still try to execute with old elements list
+      activeTask.activeTab = tab;
+      activeTask.status = 'ready';
+      await executeTaskWorkflow(activeTask);
+    }
+  }, 800);
+});
+
+// ============================================================================
 // Generate Real Action Plan matching user query against actual webpage DOM elements
 function generateRealActionPlan(query, elements, currentUrl = '') {
   if (!query) return null;

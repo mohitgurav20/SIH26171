@@ -133,6 +133,30 @@
       </button>
     </div>
 
+    <!-- Autonomous Agent Clarification Card -->
+    <div id="clarification-card" class="clarify-card hidden">
+      <div class="clarify-header">
+        <span class="clarify-icon">🤖</span>
+        <div>
+          <div class="clarify-title" id="clarify-title">I need a few details</div>
+          <div class="clarify-subtitle" id="clarify-subtitle">Tell me what to fill in:</div>
+        </div>
+        <button id="clarify-cancel-btn" class="clarify-x">✕</button>
+      </div>
+      <div id="clarify-fields" class="clarify-fields"></div>
+      <div class="clarify-actions">
+        <button id="clarify-speak-btn" class="clarify-btn-voice">
+          🎙️ Speak All
+        </button>
+        <button id="clarify-run-btn" class="clarify-btn-run">
+          ✅ Fill &amp; Execute
+        </button>
+      </div>
+      <div id="clarify-voice-hint" class="clarify-voice-hint hidden">
+        <em>Speak values in order, separated by commas...</em>
+      </div>
+    </div>
+
     <!-- Confirmation Modal -->
     <div id="confirmation-modal" class="modal-backdrop hidden">
       <div class="modal-card">

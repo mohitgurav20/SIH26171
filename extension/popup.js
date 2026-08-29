@@ -26,6 +26,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const verifyLogBtn = document.getElementById('verify-log-btn');
 
+  // Clarification Card
+  const clarificationCard = document.getElementById('clarification-card');
+  const clarifyTitle = document.getElementById('clarify-title');
+  const clarifySubtitle = document.getElementById('clarify-subtitle');
+  const clarifyFields = document.getElementById('clarify-fields');
+  const clarifyCancelBtn = document.getElementById('clarify-cancel-btn');
+  const clarifySpeakBtn = document.getElementById('clarify-speak-btn');
+  const clarifyRunBtn = document.getElementById('clarify-run-btn');
+  const clarifyVoiceHint = document.getElementById('clarify-voice-hint');
+
   // Confirmation Modal
   const confirmationModal = document.getElementById('confirmation-modal');
   const modalMessage = document.getElementById('modal-message');
@@ -34,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const modalRejectBtn = document.getElementById('modal-reject-btn');
 
   // State
+  let currentClarification = null;
   let isRecording = false;
   let recordingStartTime = null;
   let recordingInterval = null;
@@ -164,11 +175,91 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Event Listeners: Clarification Card
+  clarifyCancelBtn.addEventListener('click', () => {
+    clarificationCard.classList.add('hidden');
+    currentClarification = null;
+    updateStatus('online', 'Agent Ready');
+  });
+
+  clarifyRunBtn.addEventListener('click', submitClarification);
+
+  clarifySpeakBtn.addEventListener('click', () => {
+    clarifyVoiceHint.classList.remove('hidden');
+    // Start listening for field inputs
+    if (!isRecording) handleToggleMic();
+  });
+
+  function showClarificationDialog(req) {
+    currentClarification = req;
+    clarifyTitle.textContent = req.intentLabel || 'I need a few details';
+    clarifySubtitle.textContent = 'Fill in the information below or speak:';
+    clarifyFields.innerHTML = '';
+
+    (req.fields || []).forEach((field) => {
+      const row = document.createElement('div');
+      row.className = 'clarify-field-row';
+
+      const label = document.createElement('label');
+      label.className = 'clarify-label';
+      label.textContent = field.label;
+      if (field.optional) {
+        const opt = document.createElement('span');
+        opt.className = 'opt-tag';
+        opt.textContent = '(optional)';
+        label.appendChild(opt);
+      }
+
+      const input = document.createElement('input');
+      input.className = 'clarify-input';
+      input.type = field.type === 'password' ? 'password' : 'text';
+      input.dataset.key = field.key;
+      input.value = field.prefilled || '';
+      input.placeholder = `Enter ${field.label.toLowerCase()}...`;
+
+      row.appendChild(label);
+      row.appendChild(input);
+      clarifyFields.appendChild(row);
+    });
+
+    clarificationCard.classList.remove('hidden');
+    // Focus first empty input
+    const firstEmpty = clarifyFields.querySelector('input:not([value])') || clarifyFields.querySelector('input');
+    if (firstEmpty) setTimeout(() => firstEmpty.focus(), 100);
+  }
+
+  function submitClarification() {
+    if (!currentClarification) return;
+    const values = {};
+    const inputs = clarifyFields.querySelectorAll('.clarify-input');
+    inputs.forEach(inp => {
+      values[inp.dataset.key] = inp.value.trim();
+    });
+
+    clarificationCard.classList.add('hidden');
+    reasoningBox.innerHTML = `<strong>Autonomous Plan:</strong> Executing ${escapeHtml(currentClarification.intentLabel || 'task')}...`;
+    updateStatus('thinking', 'Executing all steps autonomously...');
+
+    chrome.runtime.sendMessage({
+      type: 'clarification_reply',
+      payload: {
+        intent: currentClarification.intent,
+        values
+      }
+    });
+
+    currentClarification = null;
+  }
+
   // Runtime Message Receiver
   chrome.runtime.onMessage.addListener((message) => {
     switch (message.type) {
       case 'status':
         updateStatus(message.payload?.state, message.payload?.message);
+        break;
+
+      case 'clarification_request':
+        showClarificationDialog(message.payload);
         break;
 
       case 'action_plan':
@@ -253,6 +344,24 @@ document.addEventListener('DOMContentLoaded', () => {
       liveTranscript.textContent = cleanText;
       liveTranscript.classList.add('has-text');
     }
+
+    // If clarification dialog is active, map spoken text into clarification fields
+    if (currentClarification && !clarificationCard.classList.contains('hidden')) {
+      const parts = cleanText.split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+      const inputs = clarifyFields.querySelectorAll('.clarify-input');
+      inputs.forEach((inp, idx) => {
+        if (parts[idx]) inp.value = parts[idx];
+      });
+      if (speechSilenceTimer) clearTimeout(speechSilenceTimer);
+      speechSilenceTimer = setTimeout(() => {
+        if (isRecording) {
+          handleToggleMic();
+          submitClarification();
+        }
+      }, 4000);
+      return;
+    }
+
     commandInput.value = cleanText;
 
     // Auto-execute after 5s pause — gives user time to finish speaking naturally
