@@ -594,7 +594,10 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     if (actions.length > 0) {
       reasoning = `Automating login workflow: filled credentials and clicked submit.`;
       return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
-    }  // =========================================================================
+    }
+  }
+
+  // =========================================================================
   // PRIORITY 2.5: Smart Form Field Fill
   // Handles: "enter repository name airtel", "type airtel in repo name",
   //          "fill description with hello", "set username to john"
