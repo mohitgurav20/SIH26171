@@ -880,16 +880,12 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   }
 
   // =========================================================================
-  // PRIORITY 0.5: Informational Questions & Page Understanding ("what is this", "explain", "summarize")
+  // PRIORITY 0.5: Informational Questions about Current Page ("what is this page", "summarize")
   // =========================================================================
-  const isQuestion = cleanQ.startsWith('what is') || cleanQ.startsWith('what are') || 
-                     cleanQ.startsWith('explain') || cleanQ.startsWith('summarize') || 
-                     cleanQ.includes("can't see") || cleanQ.includes('why is') || 
-                     cleanQ.includes('how do i') || cleanQ.includes('what does');
+  const isPageQuestion = cleanQ.includes('this page') || cleanQ.includes('this website') || cleanQ.includes('this site') || cleanQ === 'what is this' || cleanQ.startsWith('summarize') || cleanQ.includes("can't see");
 
-  if (isQuestion) {
-    // Extract key page text headings
-    const headings = elements.filter(el => el.tag_name?.startsWith('H') || el.role === 'heading' || (el.text && el.text.length > 15))
+  if (isPageQuestion && elements.length > 0) {
+    const headings = elements.filter(el => el.tag?.startsWith('h') || el.role === 'heading' || (el.text && el.text.length > 15))
                              .map(el => el.text).slice(0, 3).join(' • ');
 
     if (currentUrl.includes('isro.gov.in') || headings.toLowerCase().includes('isro') || headings.toLowerCase().includes('spark')) {
@@ -897,7 +893,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     } else if (headings) {
       reasoning = `This page displays: ${headings.slice(0, 140)}. You can say "scroll down", "click on [section]", or "go back".`;
     } else {
-      reasoning = `You are currently viewing an active webpage overlay. Say "scroll down" to explore content or "click [button name]" to interact.`;
+      reasoning = `You are currently viewing ${currentUrl || 'an active webpage'}. Say "scroll down" to explore or "click [button name]" to interact.`;
     }
 
     return { id: `plan-${Date.now()}`, confidence: 0.95, source: 'Live DOM-Perception', reasoning, actions: [] };
@@ -1167,12 +1163,15 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
 
   // =========================================================================
   // PRIORITY 5: Direct Website Domain Navigation
-  // Matches: "open google summer of code", "google summer of code", "youtube", "go to github"
+  // =========================================================================
+  // PRIORITY 5: Universal Website & Domain Navigation (ANY website on the Internet)
+  // Matches: "open canva website", "open spotify", "go to udemy", "github.com", "open gsoc"
   // =========================================================================
   const KNOWN_SITES = {
     'youtube': 'https://www.youtube.com',
     'google': 'https://www.google.com',
     'github': 'https://www.github.com',
+    'canva': 'https://www.canva.com',
     'wikipedia': 'https://www.wikipedia.org',
     'reddit': 'https://www.reddit.com',
     'gmail': 'https://mail.google.com',
@@ -1191,6 +1190,9 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     'netflix': 'https://www.netflix.com',
     'amazon': 'https://www.amazon.in',
     'flipkart': 'https://www.flipkart.com',
+    'spotify': 'https://open.spotify.com',
+    'coursera': 'https://www.coursera.org',
+    'udemy': 'https://www.udemy.com',
     'stack overflow': 'https://stackoverflow.com',
     'stackoverflow': 'https://stackoverflow.com',
     'google maps': 'https://maps.google.com',
@@ -1206,55 +1208,59 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     'codeforces': 'https://codeforces.com',
     'moodle': 'https://moodle.org',
     'nptel': 'https://nptel.ac.in',
-    'swayam': 'https://swayam.gov.in'
+    'swayam': 'https://swayam.gov.in',
+    'zomato': 'https://www.zomato.com',
+    'swiggy': 'https://www.swiggy.com'
   };
 
-  const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
+  const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to|search for)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|portal|url|link))?$/i);
   let rawTarget = isExplicitNav ? isExplicitNav[1].trim() : cleanQ;
   rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
 
   const lowerTarget = rawTarget.toLowerCase();
-  if (KNOWN_SITES[lowerTarget] || (isExplicitNav && rawTarget.includes('.') && !rawTarget.includes(' '))) {
-    let targetUrl = KNOWN_SITES[lowerTarget] || (rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`);
+
+  // 1. Exact known site match
+  if (KNOWN_SITES[lowerTarget]) {
+    const targetUrl = KNOWN_SITES[lowerTarget];
     chrome.tabs.create({ url: targetUrl });
-    actions.push({
-      step: 0,
-      tag_id: 0,
-      action: 'navigate',
-      value: targetUrl,
-      description: `Navigate to ${rawTarget}`
-    });
+    actions.push({ step: 0, tag_id: 0, action: 'navigate', value: targetUrl, description: `Navigate to ${rawTarget}` });
+    reasoning = `Opening "${rawTarget}" (${targetUrl}) in a new tab.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.99, source: 'Universal-Navigator', reasoning, actions };
+  }
+
+  // 2. Direct domain with dot (e.g. "canva.com", "bmsit.ac.in")
+  if (rawTarget.includes('.') && !rawTarget.includes(' ')) {
+    const targetUrl = rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`;
+    chrome.tabs.create({ url: targetUrl });
+    actions.push({ step: 0, tag_id: 0, action: 'navigate', value: targetUrl, description: `Navigate to ${rawTarget}` });
     reasoning = `Opening "${rawTarget}" in a new tab.`;
-    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
+    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Universal-Navigator', reasoning, actions };
+  }
+
+  // 3. Explicit "open <brand/website>" (e.g. "open canva website", "open hotstar") -> resolve to https://www.<brand>.com
+  if (isExplicitNav && !rawTarget.includes(' ') && rawTarget.length > 2) {
+    const targetUrl = `https://www.${rawTarget.toLowerCase()}.com`;
+    chrome.tabs.create({ url: targetUrl });
+    actions.push({ step: 0, tag_id: 0, action: 'navigate', value: targetUrl, description: `Navigate to ${rawTarget}` });
+    reasoning = `Opening "${rawTarget}" website (${targetUrl}) in a new tab.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.97, source: 'Universal-Navigator', reasoning, actions };
   }
 
   // =========================================================================
-  // PRIORITY 6: Primary Page Element Click Fallback (NEVER open search tabs blindly)
+  // PRIORITY 6: Universal Web Search Fallback (Searches ANY query on the Internet)
   // =========================================================================
-  if (elements.length > 0) {
-    const primaryLink = elements.find(el => (el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 5 && !el.text.toLowerCase().includes('google'))
-                     || elements[0];
-    actions.push({
-      step: 0,
-      tag_id: primaryLink.tag_id,
-      action: 'click',
-      description: `Click "${primaryLink.text?.slice(0, 45) || primaryLink.tag_name}" (#${primaryLink.tag_id})`
-    });
-    reasoning = `Interacting with element #${primaryLink.tag_id} on active page.`;
-    return { id: `plan-${Date.now()}`, confidence: 0.95, source: 'Live DOM-Perception', reasoning, actions };
-  }
-
-  if (actions.length === 0) {
-    reasoning = `No interactive target matched for "${query}".`;
-  }
-
-  return {
-    id: `plan-${Date.now()}`,
-    confidence: 0.98,
-    source: 'Live DOM-Perception',
-    reasoning,
-    actions
-  };
+  const searchQuery = isExplicitNav ? rawTarget : cleanQ;
+  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
+  chrome.tabs.create({ url: searchUrl });
+  actions.push({
+    step: 0,
+    tag_id: 0,
+    action: 'navigate',
+    value: searchUrl,
+    description: `Search "${searchQuery}" on Google`
+  });
+  reasoning = `Searching "${searchQuery}" on the web.`;
+  return { id: `plan-${Date.now()}`, confidence: 0.95, source: 'Universal-Web-Search', reasoning, actions };
 }
 
 // Handle messages from native host
