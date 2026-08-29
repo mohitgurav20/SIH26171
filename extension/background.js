@@ -411,6 +411,49 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
 
   // =========================================================================
+  // PRIORITY 0: Browser Control & History ("go back", "refresh", "reload")
+  // =========================================================================
+  if (cleanQ === 'go back' || cleanQ === 'back' || cleanQ === 'previous page') {
+    actions.push({ step: 0, tag_id: 0, action: 'back', description: 'Navigate back to previous page' });
+    reasoning = `Going back to the previous webpage.`;
+    chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+      if (tabs[0]?.id) chrome.tabs.goBack(tabs[0].id).catch(() => {});
+    });
+    return { id: `plan-${Date.now()}`, confidence: 0.99, source: 'Live DOM-Perception', reasoning, actions };
+  } else if (cleanQ === 'refresh' || cleanQ === 'reload' || cleanQ === 'reload page') {
+    actions.push({ step: 0, tag_id: 0, action: 'reload', description: 'Reload active webpage' });
+    reasoning = `Reloading current webpage.`;
+    chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+      if (tabs[0]?.id) chrome.tabs.reload(tabs[0].id).catch(() => {});
+    });
+    return { id: `plan-${Date.now()}`, confidence: 0.99, source: 'Live DOM-Perception', reasoning, actions };
+  }
+
+  // =========================================================================
+  // PRIORITY 0.5: Informational Questions & Page Understanding ("what is this", "explain", "summarize")
+  // =========================================================================
+  const isQuestion = cleanQ.startsWith('what is') || cleanQ.startsWith('what are') || 
+                     cleanQ.startsWith('explain') || cleanQ.startsWith('summarize') || 
+                     cleanQ.includes("can't see") || cleanQ.includes('why is') || 
+                     cleanQ.includes('how do i') || cleanQ.includes('what does');
+
+  if (isQuestion) {
+    // Extract key page text headings
+    const headings = elements.filter(el => el.tag_name?.startsWith('H') || el.role === 'heading' || (el.text && el.text.length > 15))
+                             .map(el => el.text).slice(0, 3).join(' • ');
+
+    if (currentUrl.includes('isro.gov.in') || headings.toLowerCase().includes('isro') || headings.toLowerCase().includes('spark')) {
+      reasoning = `You are on the ISRO SPARK Virtual Space Museum & Space Tech Park. This shows interactive exhibits of Indian satellite and rocket missions. Say "scroll down" to browse or "go back" to return to the main portal.`;
+    } else if (headings) {
+      reasoning = `This page displays: ${headings.slice(0, 140)}. You can say "scroll down", "click on [section]", or "go back".`;
+    } else {
+      reasoning = `You are currently viewing an active webpage overlay. Say "scroll down" to explore content or "click [button name]" to interact.`;
+    }
+
+    return { id: `plan-${Date.now()}`, confidence: 0.95, source: 'Live DOM-Perception', reasoning, actions: [] };
+  }
+
+  // =========================================================================
   // PRIORITY 1: Scroll intents (< 20ms) - MUST be first to avoid false text matches
   // Matches: "scroll down this existing website", "scroll down", "scroll up", "page down"
   // =========================================================================

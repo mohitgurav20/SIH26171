@@ -384,6 +384,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (actions.some(a => a.action === 'navigate')) {
         updateStatus('online', 'Task Complete ✓');
       }
+    } else {
+      planStepsContainer.style.display = 'none';
+      updateStatus('online', 'Agent Ready');
     }
   }
 
