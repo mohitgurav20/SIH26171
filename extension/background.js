@@ -609,7 +609,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     el.type === 'text' || el.type === 'email' || el.type === 'password' || el.type === 'search' || el.type === 'url' || el.type === 'number';
 
   const getElLabel = (el) =>
-    (el.aria_label || el.placeholder || el.text || el.value || '').toLowerCase();
+    (el.text || el.aria_label || el.placeholder || el.name || el.id || el.value || '').toLowerCase();
 
   const hasFormIntent = /^(?:enter|type|write|input|fill|set|change|update|put)\b/i.test(cleanQ);
   if (hasFormIntent && elements.length > 0) {

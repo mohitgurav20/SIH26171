@@ -177,20 +177,42 @@
         if (child.nodeType === Node.TEXT_NODE) {
           directText += child.textContent;
         }
+      let associatedLabel = '';
+      if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.tagName === 'SELECT') {
+        if (node.labels && node.labels.length > 0) {
+          associatedLabel = Array.from(node.labels).map(l => l.textContent.trim()).join(' ');
+        }
+        if (!associatedLabel && node.id) {
+          try {
+            const lbl = document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+            if (lbl) associatedLabel = lbl.textContent.trim();
+          } catch(e) {}
+        }
+        if (!associatedLabel) {
+          const parentLabel = node.closest('label');
+          if (parentLabel) associatedLabel = parentLabel.textContent.trim();
+        }
+        if (!associatedLabel) {
+          const container = node.closest('.form-group, .form-control, [data-target], fieldset, div');
+          const nearbyLabel = container?.querySelector('label, [class*="label"], [class*="title"], [class*="Label"]');
+          if (nearbyLabel) associatedLabel = nearbyLabel.textContent.trim();
+        }
       }
-      directText = directText.trim();
-      const fullText = (node.textContent || '').trim().replace(/\s+/g, ' ');
-      const elementText = (directText || fullText).substring(0, 120);
 
       const ariaLabel = node.getAttribute('aria-label') ||
                         node.getAttribute('title') ||
                         (node.getAttribute('aria-labelledby') ? document.getElementById(node.getAttribute('aria-labelledby'))?.textContent?.trim() : null);
+
+      const finalLabelText = associatedLabel || directText || fullText || node.name || node.id || '';
+      const elementText = finalLabelText.replace(/\s+/g, ' ').trim().substring(0, 120);
 
       const item = {
         tag_id: currentTagId,
         tag: node.tagName.toLowerCase(),
         text: elementText || null,
         aria_label: ariaLabel || null,
+        name: node.name || null,
+        id: node.id || null,
         bbox: {
           x: Math.round(rect.x),
           y: Math.round(rect.y),
@@ -366,13 +388,19 @@
   }
 
   async function simulateType(element, text) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    if (!element) return;
+    try {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    } catch(e) {}
     await sleep(150);
 
     const prevOutline = element.style.outline;
     element.style.outline = '3px solid #10b981';
 
     element.focus();
+    if (typeof element.click === 'function') {
+      try { element.click(); } catch(e) {}
+    }
 
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
       const proto = element.tagName === 'INPUT' ? window.HTMLInputElement.prototype : window.HTMLTextAreaElement.prototype;
@@ -384,22 +412,14 @@
         element.value = text;
       }
 
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true }));
+      element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      try {
+        element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+      } catch(e) {}
     } else if (element.isContentEditable) {
       element.textContent = text;
-      element.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-
-    element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    element.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-    element.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-
-    // If part of a form, submit form directly
-    if (element.form && typeof element.form.requestSubmit === 'function') {
-      try { element.form.requestSubmit(); } catch(e) { element.form.submit(); }
-    } else if (element.form) {
-      try { element.form.submit(); } catch(e) {}
+      element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     }
 
     await sleep(200);
