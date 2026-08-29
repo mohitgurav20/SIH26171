@@ -190,11 +190,44 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isRecording) handleToggleMic();
   });
 
+  const clarifySsoContainer = document.getElementById('clarify-sso-container');
+  const clarifySsoButtons = document.getElementById('clarify-sso-buttons');
+
   function showClarificationDialog(req) {
     currentClarification = req;
     clarifyTitle.textContent = req.intentLabel || 'I need a few details';
     clarifySubtitle.textContent = 'Fill in the information below or speak:';
     clarifyFields.innerHTML = '';
+
+    // Render Quick Actions / SSO Login Buttons if available on the webpage
+    if (req.quickActions && req.quickActions.length > 0) {
+      clarifySsoButtons.innerHTML = '';
+      req.quickActions.forEach(qa => {
+        const btn = document.createElement('button');
+        btn.className = 'clarify-sso-chip';
+        btn.textContent = qa.label;
+        btn.addEventListener('click', () => {
+          clarificationCard.classList.add('hidden');
+          currentClarification = null;
+          chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+            if (tabs[0]?.id) {
+              chrome.tabs.sendMessage(tabs[0].id, {
+                type: 'execute_actions',
+                payload: {
+                  actions: [{ step: 0, tag_id: qa.tag_id, action: 'click', description: `Click "${qa.label}"` }]
+                }
+              }).catch(() => {});
+            }
+          });
+          reasoningBox.innerHTML = `<strong>Autonomous Action:</strong> Clicked "${escapeHtml(qa.label)}"`;
+          updateStatus('online', `Completed: ${qa.label}`);
+        });
+        clarifySsoButtons.appendChild(btn);
+      });
+      clarifySsoContainer.classList.remove('hidden');
+    } else {
+      clarifySsoContainer.classList.add('hidden');
+    }
 
     (req.fields || []).forEach((field) => {
       const row = document.createElement('div');

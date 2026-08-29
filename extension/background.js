@@ -385,13 +385,15 @@ async function handleUserCommand(commandPayload) {
     // --- UNIVERSAL AUTONOMOUS INTENT DETECTION ---
     const detectedIntent = classifyIntent(commandPayload.text);
     if (detectedIntent) {
-      const domFields = detectedIntent.id === 'FILL_FORM' ? extractFormFieldsFromDOM(elementsList) : [];
-      const clarification = buildClarificationRequest(detectedIntent, commandPayload.text, domFields);
+      const domFields = extractFormFieldsFromDOM(elementsList);
+      const quickActions = extractQuickActionButtonsFromDOM(elementsList);
+      const clarification = buildClarificationRequest(detectedIntent, commandPayload.text, domFields, quickActions, activeTab.title || '');
 
       // Store active task state
       activeTask = {
         intent: detectedIntent,
         fields: clarification.fields,
+        quickActions,
         elements: elementsList,
         activeTab,
         status: 'waiting_for_info',
@@ -578,31 +580,71 @@ function classifyIntent(query) {
 /**
  * For FILL_FORM intent: dynamically extract field names from the page DOM
  */
+/**
+ * Dynamically extract interactive input/textarea/select fields directly from live page DOM
+ */
 function extractFormFieldsFromDOM(elements) {
   const isInputEl = (el) => el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select';
   const inputEls = elements.filter(isInputEl).filter(el =>
-    el.type !== 'submit' && el.type !== 'button' && el.type !== 'checkbox' && el.type !== 'radio'
+    el.type !== 'submit' && el.type !== 'button' && el.type !== 'checkbox' && el.type !== 'hidden'
   );
-  return inputEls.map(el => ({
-    key: (el.name || el.id || el.text || el.placeholder || `field_${el.tag_id}`).toLowerCase().replace(/\s+/g, '_'),
-    label: el.text || el.aria_label || el.placeholder || el.name || `Field ${el.tag_id}`,
-    type: el.type || 'text',
-    tag_id: el.tag_id,
-    optional: !el.required
-  }));
+
+  return inputEls.map(el => {
+    const rawLabel = el.text || el.aria_label || el.placeholder || el.name || el.id || `Field #${el.tag_id}`;
+    const cleanLabel = rawLabel.replace(/[*:]/g, '').trim();
+    const key = (el.name || el.id || cleanLabel || `field_${el.tag_id}`)
+      .toLowerCase()
+      .replace(/\[|\]/g, '_')
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_]/g, '');
+
+    return {
+      key: key || `field_${el.tag_id}`,
+      label: cleanLabel || `Field #${el.tag_id}`,
+      type: el.type === 'password' ? 'password' : (el.type || 'text'),
+      tag_id: el.tag_id,
+      optional: el.placeholder?.toLowerCase().includes('optional') || el.text?.toLowerCase().includes('optional') || false
+    };
+  });
 }
 
 /**
- * Build a clarification request to send to popup
- * Asks only for fields NOT already in the command text
+ * Extract one-click SSO / Social Login / Quick Action buttons from live DOM
+ * (e.g. "Continue with Google", "Continue with Apple", "Send OTP", "Log In with Phone")
  */
-function buildClarificationRequest(intent, query, domFields = []) {
-  const fields = intent.id === 'FILL_FORM' ? domFields : intent.requiredFields;
+function extractQuickActionButtonsFromDOM(elements) {
+  const quickActions = [];
+  const ssoKeywords = ['google', 'apple', 'facebook', 'github', 'microsoft', 'phone', 'otp', 'passkey', 'qr code', 'magic link'];
 
-  // Try to pre-extract values already mentioned in the command
+  for (const el of elements) {
+    if (el.tag === 'button' || el.role === 'button' || el.tag === 'a' || el.role === 'link') {
+      const text = (el.text || el.aria_label || '').toLowerCase();
+      for (const kw of ssoKeywords) {
+        if (text.includes(kw) && (text.includes('continue') || text.includes('sign') || text.includes('log') || text.includes('with') || text.includes('use') || text.includes('send'))) {
+          quickActions.push({
+            label: el.text?.trim() || `Continue with ${kw.charAt(0).toUpperCase() + kw.slice(1)}`,
+            tag_id: el.tag_id,
+            action: 'click'
+          });
+          break;
+        }
+      }
+    }
+  }
+  return quickActions.slice(0, 3);
+}
+
+/**
+ * Build a site-adaptive clarification request to send to popup.
+ * Always prioritizes live DOM fields if present on the active webpage.
+ */
+function buildClarificationRequest(intent, query, domFields = [], quickActions = [], siteTitle = '') {
+  // Use live DOM fields if available; otherwise use intent's template
+  const fields = (domFields && domFields.length > 0) ? domFields : (intent.requiredFields || []);
+
+  // Pre-extract values already mentioned in the user's voice/text command
   const preExtracted = {};
   fields.forEach(field => {
-    // Simple regex: look for field keyword followed by value
     const patterns = [
       new RegExp(`(?:${field.key.replace(/_/g, ' ')}|${field.label.toLowerCase()})\\s*[:=]?\\s*["']?([\\w@.+\\-]+)["']?`, 'i'),
       new RegExp(`\\b(${field.label.toLowerCase().split(' ').join('|')})\\s+(\\S+)`, 'i')
@@ -613,17 +655,20 @@ function buildClarificationRequest(intent, query, domFields = []) {
     }
   });
 
-  // Only ask for truly missing required fields
   const missing = fields.filter(f => !f.optional && !preExtracted[f.key]);
   const optional = fields.filter(f => f.optional && !preExtracted[f.key]);
 
+  let cleanSiteName = siteTitle ? siteTitle.split(/[-–|]/)[0].trim() : '';
+  let customPrompt = cleanSiteName ? `${cleanSiteName} — ${intent.confirmPrompt}` : intent.confirmPrompt;
+
   return {
     intent: intent.id,
-    intentLabel: intent.confirmPrompt,
+    intentLabel: customPrompt,
     fields: fields.map(f => ({
       ...f,
       prefilled: preExtracted[f.key] || f.default || ''
     })),
+    quickActions: quickActions || [],
     preExtracted,
     hasMissingRequired: missing.length > 0,
     missingRequired: missing,
