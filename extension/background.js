@@ -620,7 +620,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       // Strategy: strip the verb, then greedily match the longest prefix that
       // corresponds to an input label, with the remainder as the typed value.
       const stripped = cleanQ
-        .replace(/^(?:enter|type|write|input|fill in?|put in|set|change|update)\s+(?:the\s+)?/i, '')
+        .replace(/^(?:enter|type|write|input|fill\s+in|fill|put\s+in|put|set|change|update)\s+(?:the\s+)?/i, '')
         .replace(/\s+(?:field|box|input|area)$/i, '')
         .trim();
 
