@@ -410,12 +410,55 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // Strip conversational suffixes
   cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
 
-  // 2. Instant Navigation / Open Website intents (< 10ms)
-  // Matches: "open BMS it website", "BMS it website", "google summer of code website", "go to github", "visit youtube"
-  const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
-  const isWebsiteSuffix = cleanQ.match(/^(.+?)\s+(?:website|site|page|portal|url|link)$/i);
+  // 1. HIGHEST PRIORITY: "Get into the website" / Click on-page search result link
+  // Matches: "get into the isro website", "get into the website", "click first result", "open result", "enter website"
+  if (cleanQ.includes('get into') || cleanQ.includes('into the') || cleanQ.includes('into website') ||
+      cleanQ.includes('first result') || cleanQ.includes('first link') || cleanQ.includes('search result') ||
+      cleanQ.includes('open result') || cleanQ.includes('click result') || cleanQ.includes('enter website')) {
+    
+    // Extract optional target topic if mentioned (e.g. "isro", "careers", "admissions")
+    const topic = cleanQ.replace(/^(?:get into|into|enter|open|click)\s+(?:the\s+)?/i, '')
+                        .replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
 
-  if (isExplicitNav || isWebsiteSuffix) {
+    // 1st attempt: Find link matching specific topic
+    let linkElement = null;
+    if (topic && topic.length > 2 && topic !== 'website' && topic !== 'site') {
+      linkElement = elements.find(el => 
+        (el.role === 'link' || el.tag_name === 'A') &&
+        (el.text?.toLowerCase().includes(topic) || el.attributes?.href?.toLowerCase().includes(topic))
+      );
+    }
+
+    // 2nd attempt: Find primary search result link
+    if (!linkElement) {
+      linkElement = elements.find(el => 
+        (el.role === 'link' || el.tag_name === 'A') &&
+        el.text && el.text.length > 8 &&
+        !el.text.toLowerCase().includes('google') &&
+        !el.text.toLowerCase().includes('sign in') &&
+        !el.text.toLowerCase().includes('privacy') &&
+        !el.text.toLowerCase().includes('terms')
+      ) || elements.find(el => (el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 3)
+        || elements.find(el => el.role === 'link' || el.tag_name === 'A');
+    }
+
+    if (linkElement) {
+      actions.push({
+        step: 0,
+        tag_id: linkElement.tag_id,
+        action: 'click',
+        description: `Click "${linkElement.text?.slice(0, 45) || 'Primary Link'}" (#${linkElement.tag_id})`
+      });
+      reasoning = `Found link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}) on page. Clicking to navigate into website.`;
+    }
+  }
+  // 2. Instant Navigation / Open Website intents (< 10ms)
+  // Matches: "open BMS it website", "open youtube", "go to github", "visit wikipedia"
+  else if (cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i) ||
+           cleanQ.match(/^(.+?)\s+(?:website|site|portal)$/i)) {
+    const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
+    const isWebsiteSuffix = cleanQ.match(/^(.+?)\s+(?:website|site|portal)$/i);
+
     let rawTarget = (isExplicitNav ? isExplicitNav[1] : isWebsiteSuffix[1]).trim();
     rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
     let targetUrl;
@@ -548,33 +591,6 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
         description: `Fill "${valPart}" into ${fieldPart} (#${targetInput.tag_id})`
       });
       reasoning = `Found field matching "${fieldPart}" (#${targetInput.tag_id}). Filled with "${valPart}".`;
-    }
-  }
-  // 5. "Get into the website" / "Click search result" / "Open first link"
-  else if (cleanQ.includes('get into') || cleanQ.includes('into the website') ||
-    cleanQ.includes('first result') || cleanQ.includes('first link') || cleanQ.includes('search result') ||
-    cleanQ.includes('open result') || cleanQ.includes('go to website') || cleanQ.includes('visit result') ||
-    cleanQ.includes('click result') || cleanQ.includes('open this') || cleanQ.includes('enter website')) {
-    
-    // Smart link selection: Prioritize main search result links over navigation headers
-    const linkElement = elements.find(el => 
-      (el.role === 'link' || el.tag_name === 'A') &&
-      el.text && el.text.length > 8 &&
-      !el.text.toLowerCase().includes('google') &&
-      !el.text.toLowerCase().includes('sign in') &&
-      !el.text.toLowerCase().includes('privacy') &&
-      !el.text.toLowerCase().includes('terms')
-    ) || elements.find(el => (el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 3)
-      || elements.find(el => el.role === 'link' || el.tag_name === 'A');
-
-    if (linkElement) {
-      actions.push({
-        step: 0,
-        tag_id: linkElement.tag_id,
-        action: 'click',
-        description: `Click website link: "${linkElement.text?.slice(0, 45) || 'Primary Result'}" (#${linkElement.tag_id})`
-      });
-      reasoning = `Identified primary website link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}). Clicking to open.`;
     }
   }
   // 4. Click specific element: "click on about us", "click login", "tap submit", "click admissions"
