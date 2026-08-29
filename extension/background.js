@@ -399,7 +399,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   const actions = [];
   let reasoning = '';
 
-  // 1. Conversational Query Normalizer: strip conversational filler words (e.g. "hey", "can you", "please", "bro")
+  // 1. Normalize query: strip conversational filler words (e.g. "hey", "can you", "please", "bro")
   let cleanQ = query.toLowerCase().trim();
   let prevQ;
   do {
@@ -410,98 +410,13 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // Strip conversational suffixes
   cleanQ = cleanQ.replace(/\s+(?:for me|for us|please|now|fast)$/i, '').trim();
 
-  // 1. HIGHEST PRIORITY: "Get into the website" / Click on-page search result link
-  // Matches: "get into the isro website", "get into the website", "click first result", "open result", "enter website"
-  if (cleanQ.includes('get into') || cleanQ.includes('into the') || cleanQ.includes('into website') ||
-      cleanQ.includes('first result') || cleanQ.includes('first link') || cleanQ.includes('search result') ||
-      cleanQ.includes('open result') || cleanQ.includes('click result') || cleanQ.includes('enter website')) {
-    
-    // Extract optional target topic if mentioned (e.g. "isro", "careers", "admissions")
-    const topic = cleanQ.replace(/^(?:get into|into|enter|open|click)\s+(?:the\s+)?/i, '')
-                        .replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
-
-    // 1st attempt: Find link matching specific topic
-    let linkElement = null;
-    if (topic && topic.length > 2 && topic !== 'website' && topic !== 'site') {
-      linkElement = elements.find(el => 
-        (el.role === 'link' || el.tag_name === 'A') &&
-        (el.text?.toLowerCase().includes(topic) || el.attributes?.href?.toLowerCase().includes(topic))
-      );
-    }
-
-    // 2nd attempt: Find primary search result link
-    if (!linkElement) {
-      linkElement = elements.find(el => 
-        (el.role === 'link' || el.tag_name === 'A') &&
-        el.text && el.text.length > 8 &&
-        !el.text.toLowerCase().includes('google') &&
-        !el.text.toLowerCase().includes('sign in') &&
-        !el.text.toLowerCase().includes('privacy') &&
-        !el.text.toLowerCase().includes('terms')
-      ) || elements.find(el => (el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 3)
-        || elements.find(el => el.role === 'link' || el.tag_name === 'A');
-    }
-
-    if (linkElement) {
-      actions.push({
-        step: 0,
-        tag_id: linkElement.tag_id,
-        action: 'click',
-        description: `Click "${linkElement.text?.slice(0, 45) || 'Primary Link'}" (#${linkElement.tag_id})`
-      });
-      reasoning = `Found link "${linkElement.text || 'Result'}" (#${linkElement.tag_id}) on page. Clicking to navigate into website.`;
-    }
-  }
-  // 2. Instant Navigation / Open Website intents (< 10ms)
-  // Matches: "open BMS it website", "open youtube", "go to github", "visit wikipedia"
-  else if (cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i) ||
-           cleanQ.match(/^(.+?)\s+(?:website|site|portal)$/i)) {
-    const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
-    const isWebsiteSuffix = cleanQ.match(/^(.+?)\s+(?:website|site|portal)$/i);
-
-    let rawTarget = (isExplicitNav ? isExplicitNav[1] : isWebsiteSuffix[1]).trim();
-    rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
-    let targetUrl;
-
-    const KNOWN_SITES = {
-      'youtube': 'https://www.youtube.com',
-      'google': 'https://www.google.com',
-      'github': 'https://www.github.com',
-      'wikipedia': 'https://www.wikipedia.org',
-      'reddit': 'https://www.reddit.com',
-      'gmail': 'https://mail.google.com',
-      'chatgpt': 'https://chat.openai.com',
-      'isro': 'https://www.isro.gov.in',
-      'gsoc': 'https://summerofcode.withgoogle.com',
-      'google summer of code': 'https://summerofcode.withgoogle.com',
-      'bmsit': 'https://bmsit.ac.in',
-      'bms it': 'https://bmsit.ac.in',
-      'bms': 'https://bmsit.ac.in',
-      'bms institute of technology': 'https://bmsit.ac.in'
-    };
-
-    const lowerTarget = rawTarget.toLowerCase();
-    if (KNOWN_SITES[lowerTarget]) {
-      targetUrl = KNOWN_SITES[lowerTarget];
-    } else if (rawTarget.includes('.') && !rawTarget.includes(' ')) {
-      targetUrl = rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`;
-    } else {
-      targetUrl = `https://www.google.com/search?q=${encodeURIComponent(rawTarget)}`;
-    }
-
-    chrome.tabs.create({ url: targetUrl });
-    actions.push({
-      step: 0,
-      tag_id: 0,
-      action: 'navigate',
-      value: targetUrl,
-      description: `Navigate to ${rawTarget}`
-    });
-    reasoning = `Opening "${rawTarget}" in a new tab.`;
-  }
-  // 3. Login with credentials & Form Automation (< 30ms)
-  // Matches: "login with username mohit and password secret", "enter credentials", "login to portal", "sign in"
-  else if (cleanQ.includes('login') || cleanQ.includes('sign in') || cleanQ.includes('credentials') || cleanQ.includes('log in')) {
+  // =========================================================================
+  // PRIORITY 1: Autonomous Login & Form Filling (< 30ms)
+  // If user says "login ...", "sign in ...", "enter credentials ..."
+  // =========================================================================
+  const isLoginIntent = cleanQ.includes('login') || cleanQ.includes('sign in') || cleanQ.includes('credentials') || cleanQ.includes('log in');
+  
+  if (isLoginIntent) {
     const userMatch = cleanQ.match(/(?:username|user|email|id|login)\s+(?:is\s+|as\s+)?([^\s]+)/i);
     const passMatch = cleanQ.match(/(?:password|pass|pwd)\s+(?:is\s+|as\s+)?([^\s]+)/i);
 
@@ -558,60 +473,48 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
 
     if (actions.length > 0) {
       reasoning = `Automating login workflow: filled credentials and clicked submit.`;
+      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
     }
   }
-  // 4. Targeted Form Field Filling: "type John in name", "fill email with test@gmail.com"
-  else if (cleanQ.match(/^(?:type|fill|enter|input)\s+(.+?)\s+(?:in|into|with|as)\s+(.+?)$/i)) {
-    const fillMatch = cleanQ.match(/^(?:type|fill|enter|input)\s+(.+?)\s+(?:in|into|with|as)\s+(.+?)$/i);
-    let valPart = fillMatch[1].trim();
-    let fieldPart = fillMatch[2].trim();
 
-    // Check if swapped (e.g. "fill email with test@gmail.com")
-    if (cleanQ.includes(' with ')) {
-      const swapped = cleanQ.match(/^(?:fill|enter|set)\s+(.+?)\s+with\s+(.+?)$/i);
-      if (swapped) {
-        fieldPart = swapped[1].trim();
-        valPart = swapped[2].trim();
-      }
-    }
-
-    const targetInput = elements.find(el => 
-      (el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA' || el.role === 'textbox') &&
-      (el.text?.toLowerCase().includes(fieldPart) || el.attributes?.name?.toLowerCase().includes(fieldPart) ||
-       el.attributes?.placeholder?.toLowerCase().includes(fieldPart) || el.attributes?.id?.toLowerCase().includes(fieldPart) ||
-       el.aria_label?.toLowerCase().includes(fieldPart))
-    ) || elements.find(el => el.tag_name === 'INPUT' || el.tag_name === 'TEXTAREA');
-
-    if (targetInput) {
-      actions.push({
-        step: 0,
-        tag_id: targetInput.tag_id,
-        action: 'type',
-        value: valPart,
-        description: `Fill "${valPart}" into ${fieldPart} (#${targetInput.tag_id})`
-      });
-      reasoning = `Found field matching "${fieldPart}" (#${targetInput.tag_id}). Filled with "${valPart}".`;
-    }
-  }
-  // 4. Click specific element: "click on about us", "click login", "tap submit", "click admissions"
-  else if (cleanQ.startsWith('click ') || cleanQ.startsWith('tap ') || cleanQ.startsWith('press ') || cleanQ.startsWith('select ')) {
-    const targetLabel = cleanQ.replace(/^(?:click on|click|tap on|tap|press on|press|select)\s+(?:the\s+)?/i, '').replace(/\s+(?:button|link|tab|option)$/i, '').trim();
+  // =========================================================================
+  // PRIORITY 2: On-Page Result Entry / Click Matching Link (< 30ms)
+  // If user says "get into isro", "login the isro website", "click result", "click admissions"
+  // Look at the CURRENT WEBPAGE and click the best matching link or button!
+  // =========================================================================
+  if (elements.length > 0) {
+    // Extract keywords
+    const searchTerms = cleanQ.replace(/^(?:open|get into|into|go to|click on|click|visit|tap|login|enter)\s+(?:the\s+)?/i, '')
+                              .replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
 
     let bestEl = null;
     let bestScore = 0;
 
     for (const el of elements) {
       const elText = (el.text || el.aria_label || el.attributes?.title || el.attributes?.placeholder || el.name || '').toLowerCase();
-      if (!elText) continue;
+      const elHref = (el.attributes?.href || '').toLowerCase();
+      if (!elText && !elHref) continue;
 
       let score = 0;
-      if (elText === targetLabel) score = 100;
-      else if (elText.includes(targetLabel)) score = 50;
-      else {
-        const words = targetLabel.split(/\s+/);
-        for (const w of words) {
-          if (w.length > 2 && elText.includes(w)) score += 10;
-        }
+      
+      // Match query terms
+      const words = (searchTerms || cleanQ).split(/\s+/).filter(w => w.length > 2);
+      for (const w of words) {
+        if (elText.includes(w)) score += 30;
+        if (elHref.includes(w)) score += 20;
+      }
+
+      // Exact match bonus
+      if (searchTerms && elText.includes(searchTerms)) score += 50;
+
+      // Penalize generic navigational links on search engines
+      if (elText.includes('privacy') || elText.includes('terms') || elText === 'google' || elText === 'sign in') {
+        score -= 40;
+      }
+
+      // Prioritize substantial result links on search pages
+      if ((el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 8) {
+        score += 15;
       }
 
       if (score > bestScore) {
@@ -620,32 +523,37 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       }
     }
 
-    if (bestEl && bestScore > 0) {
+    // If an element on the current page clearly matches the user's target, CLICK IT!
+    if (bestEl && bestScore >= 30) {
       actions.push({
         step: 0,
         tag_id: bestEl.tag_id,
         action: 'click',
-        description: `Click "${bestEl.text || bestEl.aria_label || targetLabel}" (#${bestEl.tag_id})`
+        description: `Click "${bestEl.text?.slice(0, 45) || 'Target Element'}" (#${bestEl.tag_id})`
       });
-      reasoning = `Found element matching "${targetLabel}" (#${bestEl.tag_id}) with confidence score ${bestScore}.`;
-    } else {
-      // If element not on page, search for target
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(targetLabel)}`;
-      chrome.tabs.create({ url: searchUrl });
-      actions.push({ step: 0, tag_id: 0, action: 'navigate', value: searchUrl, description: `Search "${targetLabel}" on Google` });
-      reasoning = `Element "${targetLabel}" not found on page. Searching on Google.`;
+      reasoning = `Found on-page element matching "${searchTerms || cleanQ}" (#${bestEl.tag_id}). Clicking directly on active page.`;
+      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
     }
   }
-  // 5. Scroll intents
-  else if (cleanQ.includes('scroll down') || cleanQ.includes('down') || cleanQ.includes('page down')) {
+
+  // =========================================================================
+  // PRIORITY 3: Scroll intents (< 20ms)
+  // =========================================================================
+  if (cleanQ.includes('scroll down') || cleanQ.includes('down') || cleanQ.includes('page down')) {
     actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'down', amount: 600, description: 'Scroll page down 600px' });
     reasoning = `Recognized scroll command. Scrolling page down.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
   } else if (cleanQ.includes('scroll up') || cleanQ.includes('up') || cleanQ.includes('page up')) {
     actions.push({ step: 0, tag_id: 0, action: 'scroll', direction: 'up', amount: 600, description: 'Scroll page up 600px' });
     reasoning = `Recognized scroll command. Scrolling page up.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
   }
-  // 6. Search / Type intents
-  else if (cleanQ.includes('search') || cleanQ.includes('type') || cleanQ.includes('find') || cleanQ.includes('enter') || cleanQ.includes('write') || cleanQ.includes('google')) {
+
+  // =========================================================================
+  // PRIORITY 4: Type into on-page Search Input (< 30ms)
+  // If user says "search for X", "type X into search box"
+  // =========================================================================
+  if (cleanQ.includes('search') || cleanQ.includes('type') || cleanQ.includes('find') || cleanQ.includes('enter') || cleanQ.includes('write')) {
     let searchText = cleanQ.replace(/^(?:search for|search|type|find|enter|write|google for|google)\s*/i, '').trim();
     if (!searchText) searchText = cleanQ;
 
@@ -669,63 +577,79 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
         value: 'Enter',
         description: `Press Enter to submit search`
       });
-      reasoning = `Found search box "${inputNode.text || inputNode.attributes?.placeholder || 'search'}" (#${inputNode.tag_id}). Typing query and submitting.`;
-    } else {
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(searchText)}`;
-      chrome.tabs.create({ url: searchUrl });
-      actions.push({
-        step: 0,
-        tag_id: 0,
-        action: 'navigate',
-        value: searchUrl,
-        description: `Search "${searchText}" on Google`
-      });
-      reasoning = `No search field found on active tab. Opening Google search for "${searchText}".`;
+      reasoning = `Found search box "${inputNode.text || inputNode.attributes?.placeholder || 'search'}" (#${inputNode.tag_id}). Typing query and submitting on active page.`;
+      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
     }
   }
-  // 7. General Keyword / DOM matching fallback
-  else {
-    let bestMatch = null;
-    let bestScore = 0;
 
-    for (const el of elements) {
-      const elText = (el.text || el.aria_label || el.attributes?.title || el.attributes?.placeholder || '').toLowerCase();
-      if (!elText) continue;
+  // =========================================================================
+  // PRIORITY 5: Direct Website Domain Navigation (ONLY for explicit new site requests)
+  // =========================================================================
+  const isExplicitNav = cleanQ.match(/^(?:open|go to|launch|visit|navigate to)\s+(?:the\s+)?(.+?)(?:\s+(?:website|site|page|url|link))?$/i);
+  if (isExplicitNav) {
+    let rawTarget = isExplicitNav[1].trim();
+    rawTarget = rawTarget.replace(/^(?:the|a|an)\s+/i, '').replace(/\s+(?:website|site|page|portal|url|link)$/i, '').trim();
+    let targetUrl;
 
-      let score = 0;
-      const words = cleanQ.split(/\s+/);
-      for (const w of words) {
-        if (w.length > 2 && elText.includes(w)) score += 3;
-      }
-      if (elText.includes(cleanQ)) score += 10;
+    const KNOWN_SITES = {
+      'youtube': 'https://www.youtube.com',
+      'google': 'https://www.google.com',
+      'github': 'https://www.github.com',
+      'wikipedia': 'https://www.wikipedia.org',
+      'reddit': 'https://www.reddit.com',
+      'gmail': 'https://mail.google.com',
+      'chatgpt': 'https://chat.openai.com',
+      'isro': 'https://www.isro.gov.in',
+      'gsoc': 'https://summerofcode.withgoogle.com',
+      'google summer of code': 'https://summerofcode.withgoogle.com',
+      'bmsit': 'https://bmsit.ac.in',
+      'bms it': 'https://bmsit.ac.in',
+      'bms': 'https://bmsit.ac.in',
+      'bms institute of technology': 'https://bmsit.ac.in'
+    };
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = el;
-      }
-    }
-
-    if (bestMatch && bestScore > 0) {
-      actions.push({
-        step: 0,
-        tag_id: bestMatch.tag_id,
-        action: 'click',
-        description: `Click on "${bestMatch.text || bestMatch.aria_label || bestMatch.tag_name}" (#${bestMatch.tag_id})`
-      });
-      reasoning = `Found matching element "${bestMatch.text || bestMatch.aria_label}" (#${bestMatch.tag_id}).`;
-    } else {
-      // Universal fallback: Open search in new tab
-      const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(cleanQ)}`;
-      chrome.tabs.create({ url: searchUrl });
+    const lowerTarget = rawTarget.toLowerCase();
+    if (KNOWN_SITES[lowerTarget]) {
+      targetUrl = KNOWN_SITES[lowerTarget];
+      chrome.tabs.create({ url: targetUrl });
       actions.push({
         step: 0,
         tag_id: 0,
         action: 'navigate',
-        value: searchUrl,
-        description: `Search "${cleanQ}" on Google`
+        value: targetUrl,
+        description: `Navigate to ${rawTarget}`
       });
-      reasoning = `Opening web search for "${cleanQ}".`;
+      reasoning = `Opening "${rawTarget}" in a new tab.`;
+      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
+    } else if (rawTarget.includes('.') && !rawTarget.includes(' ')) {
+      targetUrl = rawTarget.startsWith('http') ? rawTarget : `https://${rawTarget}`;
+      chrome.tabs.create({ url: targetUrl });
+      actions.push({
+        step: 0,
+        tag_id: 0,
+        action: 'navigate',
+        value: targetUrl,
+        description: `Navigate to ${rawTarget}`
+      });
+      reasoning = `Opening "${rawTarget}" in a new tab.`;
+      return { id: `plan-${Date.now()}`, confidence: 0.98, source: 'Live DOM-Perception', reasoning, actions };
     }
+  }
+
+  // =========================================================================
+  // PRIORITY 6: Primary Page Element Click Fallback (NEVER open search tabs blindly)
+  // =========================================================================
+  if (elements.length > 0) {
+    const primaryLink = elements.find(el => (el.role === 'link' || el.tag_name === 'A') && el.text && el.text.length > 5 && !el.text.toLowerCase().includes('google'))
+                     || elements[0];
+    actions.push({
+      step: 0,
+      tag_id: primaryLink.tag_id,
+      action: 'click',
+      description: `Click "${primaryLink.text?.slice(0, 45) || primaryLink.tag_name}" (#${primaryLink.tag_id})`
+    });
+    reasoning = `Interacting with element #${primaryLink.tag_id} on active page.`;
+    return { id: `plan-${Date.now()}`, confidence: 0.95, source: 'Live DOM-Perception', reasoning, actions };
   }
 
   if (actions.length === 0) {
