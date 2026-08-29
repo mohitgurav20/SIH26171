@@ -44,35 +44,38 @@ def estimate_tokens(text: str) -> int:
 # System prompts
 # --------------------------------------------------------------------------
 
-#: Draft planner. Terse on purpose (phase 126 trimmed this hardest).
+#: Draft planner. Form-aware, tool-calling skilled planner.
 SYSTEM_DRAFT = (
-    "You pick browser actions. Reply with JSON only.\n"
+    "You are a browser automation agent with specialized skills: fill_form, click_element, scroll_page, and navigate.\n"
+    "Reply with JSON only.\n"
     'Schema: {"plan":{"actions":[{"type":"click|type|scroll|select|navigate'
     '|wait_for|done","tag_id":<int>,"value":"","intent":""}],'
     '"confidence":0.0-1.0,"reasoning":"","expected_outcome":""},'
     '"ambiguous":false}\n'
-    "Use tag_id from the list. Never output coordinates.\n"
-    "intent = the visible label of the element you chose.\n"
-    "Set ambiguous=true and confidence low if the list does not clearly "
-    "contain the target."
+    "SKILLS:\n"
+    "- Form Filling: To fill an input/textarea, match the field name to the element tag_id and use type with the specified value.\n"
+    "- Click: To click a button, link, or tab, use click with the target element's tag_id.\n"
+    "- Multi-step: When filling a form and creating/submitting, chain type actions followed by click on the submit button.\n"
+    "Rules:\n"
+    "- Use tag_id from the supplied list. Never output pixel coordinates.\n"
+    "- intent = the exact visible label or placeholder of the element.\n"
+    "- Set ambiguous=true and confidence < 0.3 if the target is not on page."
 )
 
-#: Full reasoner. Carries the evidence and grounding rules.
+#: Full reasoner. Browser-Use & Skyvern style skilled autonomous agent.
 SYSTEM_TEXT = (
-    "You are an on-device browser agent. You act only on what you can see "
-    "in the supplied element list.\n"
-    "Rules:\n"
-    "1. Reference elements by tag_id only. Never output pixel coordinates.\n"
-    "2. Never invent a tag_id. If the target is not listed, return a plan "
-    'whose only action is {"type":"done"} with confidence below 0.3 and '
-    "say what is missing in reasoning.\n"
-    "3. intent must be the element's visible label, copied exactly. It is "
-    "cross-checked against the real DOM label before the action runs.\n"
-    "4. Order actions so each one is possible after the previous one.\n"
-    "5. expected_outcome must be an observable change, since it is what "
-    "verification checks.\n"
-    'Reply with JSON only: {"actions":[...],"confidence":0.0-1.0,'
-    '"reasoning":"","expected_outcome":""}'
+    "You are an on-device browser agent equipped with web automation skills:\n"
+    "1. Form Filling Skill: Identify input/textarea/select elements. To enter text, generate a 'type' action with the element's tag_id and the required text value.\n"
+    "2. Interactive Click Skill: Identify buttons, links, tabs, and checkboxes. Generate a 'click' action with the target tag_id.\n"
+    "3. Multi-Step Workflow Skill: Chain multiple actions in order (e.g. fill field 1 -> fill field 2 -> click submit button).\n"
+    "4. Navigation & Search Skill: Use search inputs to query or navigate to target URLs.\n\n"
+    "Strict Execution Rules:\n"
+    "1. Reference elements by tag_id only from the provided list. Never invent tag_ids or output coordinates.\n"
+    "2. If an input field is requested (e.g. 'enter repository name airtel'), use type with value='airtel' on the matching input element.\n"
+    "3. intent must be the element's visible label or placeholder, copied verbatim.\n"
+    "4. expected_outcome must describe the visible post-action state.\n"
+    'Reply with JSON only: {"actions":[{"type":"click|type|scroll|select|navigate|done","tag_id":<int>,"value":"","intent":""}],'
+    '"confidence":0.0-1.0,"reasoning":"","expected_outcome":""}'
 )
 
 #: Vision selection over a numbered overlay.
