@@ -381,7 +381,16 @@
     clickableParent.dispatchEvent(new MouseEvent('click', eventInit));
 
     if (typeof clickableParent.click === 'function') {
-      clickableParent.click();
+      try { clickableParent.click(); } catch(e) {}
+    }
+
+    if (clickableParent.tagName === 'IFRAME') {
+      try {
+        clickableParent.focus();
+        if (clickableParent.contentWindow) {
+          clickableParent.contentWindow.focus();
+        }
+      } catch(e) {}
     }
 
     // Direct href navigation fallback for <a> links if framework didn't intercept
@@ -478,6 +487,47 @@
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  function findElementSemantically(step) {
+    const rawTarget = (step.intent || step.description || '')
+      .replace(/^Click\s+["']?/i, '')
+      .replace(/["']?\s+to complete$/i, '')
+      .replace(/["']?\s*\(#\d+\)$/i, '')
+      .replace(/^Type\s+["'][^"']+["']\s+into\s+["']?/i, '')
+      .trim().toLowerCase();
+
+    if (!rawTarget) return null;
+
+    const candidates = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], div[onclick], span[onclick], iframe, [tabindex]'));
+    let best = null;
+    let bestScore = 0;
+
+    const words = rawTarget.split(/\s+/).filter(w => w.length >= 3 && !['the', 'and', 'with', 'for', 'click'].includes(w));
+
+    for (const el of candidates) {
+      if (!isElementVisible(el, window.getComputedStyle(el))) continue;
+      const text = (el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || el.value || '').toLowerCase();
+      if (!text) continue;
+
+      let score = 0;
+      for (const w of words) {
+        if (text.includes(w)) score += 30;
+      }
+      if (rawTarget.length > 3 && text.includes(rawTarget)) score += 70;
+      if (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') score += 15;
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    }
+
+    if (bestScore >= 25) {
+      console.log(`[Content] Recovered target node semantically for step #${step.step || 0} (score: ${bestScore}):`, best);
+      return best;
+    }
+    return null;
+  }
+
   /**
    * Task 44: Native multi-action executor with per-step existence checks
    * If step N target vanished due to step N-1 changing the page, abort remaining plan
@@ -497,12 +547,20 @@
 
       // Immediate pre-step existence check
       if (step.tag_id) {
+        if (tagElementMap.size === 0) {
+          extractInteractiveElements(true);
+        }
         targetNode = tagElementMap.get(step.tag_id);
         // Verify node is still connected to document
         if (targetNode && !document.contains(targetNode)) {
           console.warn(`[Content] Target tag #${step.tag_id} disconnected from DOM before step #${stepIndex}`);
           targetNode = null;
         }
+      }
+
+      // Robust Semantic Recovery: find matching element on live page if tag_id mapping shifted
+      if (!targetNode && (step.description || step.intent || step.value)) {
+        targetNode = findElementSemantically(step);
       }
 
       const result = {

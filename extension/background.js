@@ -839,10 +839,12 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // Web Speech API commonly mishears proper nouns. Fix before any intent logic.
   // =========================================================================
   const PHONETIC_FIXES = [
-    // Continue as / SSO fixes ("continue has mohit", "continue us", "continue has")
-    [/\bcontinue\s+has\b/g,            'continue as'],
-    [/\bcontinue\s+us\b/g,             'continue as'],
-    [/\bhas\s+mohit\b/g,               'as mohit'],
+    // Continue as / SSO fixes ("continue has mohit", "continue us", "continue has", "login with my first email")
+    [/\blogin with (?:my\s+)?first\s+(?:e-?mail|mail)\b/gi, 'continue as mohit'],
+    [/\b(?:my\s+)?first\s+(?:e-?mail|mail)\b/gi,            'continue as mohit'],
+    [/\bcontinue\s+has\b/g,                                'continue as'],
+    [/\bcontinue\s+us\b/g,                                 'continue as'],
+    [/\bhas\s+mohit\b/g,                                   'as mohit'],
     // GitHub (most common — "guitar", "get hub", "git hub", "get up", "github")
     [/\bguitar\b/g,                   'github'],
     [/\bget hub\b/g,                   'github'],
