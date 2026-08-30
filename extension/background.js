@@ -825,6 +825,157 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 // ============================================================================
+// ============================================================================
+// Universal Compound Flow Decomposition Engine
+// Breaks natural dictated multi-step sentences into chained actions in one flow.
+// Example: "enter Coca-Cola as repository name make public to private and create"
+//  -> Step 0: type "Coca-Cola" into Repository Name (#53)
+//  -> Step 1: click "Private" (#57)
+//  -> Step 2: click "Create repository" (#62)
+// ============================================================================
+function parseCompoundWorkflow(query, elements) {
+  if (!query || elements.length === 0) return null;
+
+  const rawSegments = query
+    .split(/\s+(?:and\s+then|then|after\s+that|and\s+also|also|and|,|;)\s+|\s+(?=(?:make|set|change|switch|turn|select|choose|click|press|tap|submit|create|save|fill|type|enter)\s+)/i)
+    .map(s => s.trim())
+    .filter(s => s.length > 1);
+
+  if (rawSegments.length < 2) return null;
+
+  const actions = [];
+  const descriptions = [];
+  const isInputEl = (el) =>
+    el.tag === 'input' || el.tag === 'textarea' || el.role === 'textbox' || el.role === 'searchbox';
+  const getElLabel = (el) =>
+    (el.text || el.aria_label || el.placeholder || el.name || el.id || el.value || '').toLowerCase();
+
+  const inputEls = elements.filter(isInputEl).filter(el => el.type !== 'radio' && el.type !== 'checkbox');
+  const clickableEls = elements.filter(el => !isInputEl(el) || el.type === 'radio' || el.type === 'checkbox');
+
+  for (const segment of rawSegments) {
+    let handled = false;
+
+    // ── 1. TYPE / FORM FILL INTENT ───────────────────────────────────────────
+    const typeMatch = segment.match(/^(?:enter|type|write|input|fill\s+in|fill|put\s+in|put|set)\s+(.+)$/i);
+    if (typeMatch) {
+      const rest = typeMatch[1].trim();
+      const asMatch = rest.match(/^(.+?)\s+(?:as|in(?:to)?|inside|for)\s+(?:the\s+)?(.+)$/i);
+      const withMatch = rest.match(/^(.+?)\s+(?:with|to|=)\s+(.+)$/i);
+
+      let val = null;
+      let fieldName = null;
+
+      if (asMatch) {
+        val = asMatch[1].trim();
+        fieldName = asMatch[2].trim().replace(/\s*(field|box|input|area)$/i, '');
+      } else if (withMatch) {
+        fieldName = withMatch[1].trim().replace(/\s*(field|box|input|area)$/i, '');
+        val = withMatch[2].trim();
+      }
+
+      if (val && fieldName) {
+        const fieldWords = fieldName.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+        let bestInput = null;
+        let bestScore = 0;
+        for (const el of inputEls) {
+          const lbl = getElLabel(el);
+          let score = fieldWords.reduce((s, w) => s + (lbl.includes(w) ? 35 : 0), 0);
+          if (lbl.includes(fieldName.toLowerCase())) score += 50;
+          if (score > bestScore) { bestScore = score; bestInput = el; }
+        }
+        if (!bestInput && inputEls.length > 0) bestInput = inputEls[0];
+
+        if (bestInput) {
+          actions.push({
+            step: actions.length,
+            tag_id: bestInput.tag_id,
+            action: 'type',
+            value: val,
+            description: `Type "${val}" into "${fieldName}" (#${bestInput.tag_id})`
+          });
+          descriptions.push(`typed "${val}" into "${fieldName}"`);
+          handled = true;
+        }
+      }
+    }
+
+    // ── 2. TOGGLE / RADIO / OPTION SELECTION INTENT ──────────────────────────
+    if (!handled) {
+      const toggleMatch = segment.match(/^(?:make|set|change|switch|turn|toggle|choose|select)\s+(?:from\s+)?(?:[a-z0-9_-]+\s+)?(?:to\s+)?(.+)$/i);
+      if (toggleMatch) {
+        const targetOption = toggleMatch[1].trim().replace(/^(?:the\s+|a\s+)/i, '').toLowerCase();
+        let bestOptEl = null;
+        let bestScore = 0;
+
+        for (const el of elements) {
+          const lbl = getElLabel(el);
+          let score = 0;
+          if (lbl.includes(targetOption)) score += 60;
+          const words = targetOption.split(/\s+/).filter(w => w.length > 2);
+          for (const w of words) {
+            if (lbl.includes(w)) score += 30;
+          }
+          if (el.role === 'radio' || el.type === 'radio' || el.tag === 'button' || el.role === 'button' || el.tag === 'label') score += 20;
+          if (score > bestScore) { bestScore = score; bestOptEl = el; }
+        }
+
+        if (bestOptEl && bestScore >= 30) {
+          actions.push({
+            step: actions.length,
+            tag_id: bestOptEl.tag_id,
+            action: 'click',
+            description: `Select "${bestOptEl.text?.slice(0, 30) || targetOption}" (#${bestOptEl.tag_id})`
+          });
+          descriptions.push(`selected "${targetOption}"`);
+          handled = true;
+        }
+      }
+    }
+
+    // ── 3. CLICK / SUBMIT / ACTION INTENT ────────────────────────────────────
+    if (!handled) {
+      const cleanSeg = segment.replace(/^(?:click\s+on|click|press|tap|hit|submit|save|create)\s*(?:the\s+)?/i, '').trim();
+      const targetName = cleanSeg || segment;
+      const words = (targetName || segment).toLowerCase().split(/\s+/).filter(w => w.length > 2);
+
+      let bestBtn = null;
+      let bestScore = 0;
+
+      for (const el of clickableEls) {
+        const lbl = getElLabel(el);
+        let score = 0;
+        if (lbl.includes(targetName.toLowerCase())) score += 60;
+        for (const w of words) {
+          if (lbl.includes(w)) score += 30;
+        }
+        if (el.tag === 'button' || el.role === 'button' || el.type === 'submit') score += 20;
+        if (score > bestScore) { bestScore = score; bestBtn = el; }
+      }
+
+      if (bestBtn && bestScore >= 30) {
+        actions.push({
+          step: actions.length,
+          tag_id: bestBtn.tag_id,
+          action: 'click',
+          description: `Click "${bestBtn.text?.slice(0, 35) || targetName}" (#${bestBtn.tag_id})`
+        });
+        descriptions.push(`clicked "${bestBtn.text?.slice(0, 30) || targetName}"`);
+        handled = true;
+      }
+    }
+  }
+
+  if (actions.length >= 2) {
+    return {
+      reasoning: `Autonomous compound flow: ${descriptions.join(' ➔ ')}.`,
+      actions
+    };
+  }
+  return null;
+}
+
+// ============================================================================
 // Generate Real Action Plan matching user query against actual webpage DOM elements
 function generateRealActionPlan(query, elements, currentUrl = '') {
   if (!query) return null;
@@ -910,6 +1061,22 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
     cleanQ = cleanQ.replace(/\s+(?:nikal kar de sakte ho|nikal kar do|nikal ke do|nikal do|khol kar do|khol ke do|khol do|kholo|open kar do|open karo|open karke do|dikha do|dikhao|search kar do|search karo|de sakte ho|kar sakte ho|karo|chahiye|for me|for us|please|now|fast)$/i, '').trim();
   } while (cleanQ !== prevSuff);
 
+  // =========================================================================
+  // PRIORITY -1: Autonomous Compound Flow Decomposition
+  // Handles multi-clause natural dictations: "enter X into Y, set Z to private, and create"
+  // =========================================================================
+  if (elements.length > 0) {
+    const compoundPlan = parseCompoundWorkflow(cleanQ, elements);
+    if (compoundPlan && compoundPlan.actions.length >= 2) {
+      return {
+        id: `plan-${Date.now()}`,
+        confidence: 0.99,
+        source: 'Compound-Flow-Perception',
+        reasoning: compoundPlan.reasoning,
+        actions: compoundPlan.actions
+      };
+    }
+  }
 
   // =========================================================================
   // PRIORITY 0: Browser Control & History ("go back", "refresh", "reload")
@@ -1058,18 +1225,19 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
         .replace(/\s+(?:field|box|input|area)$/i, '')
         .trim();
 
-      // Pattern A: "VALUE in[to] FIELD"  →  "airtel into repository name"
-      const intoMatch = stripped.match(/^(.+?)\s+(?:in(?:to)?|inside)\s+(?:the\s+)?(.+)$/i);
+      // Pattern A: "VALUE as/in[to] FIELD"  →  "Coca-Cola as repository name"
+      const asMatch = stripped.match(/^(.+?)\s+(?:as|for|in(?:to)?|inside)\s+(?:the\s+)?(.+)$/i);
+      // Pattern B: "FIELD with/to/= VALUE"  →  "repository name with Coca-Cola"
+      const withMatch = stripped.match(/^(.+?)\s+(?:with|to|=)\s+(.+)$/i);
       let parsedField = null;
       let parsedValue = null;
 
-      if (intoMatch) {
-        parsedValue = intoMatch[1].trim();
-        parsedField = intoMatch[2].trim().replace(/\s*(field|box|input|area)$/i, '').trim();
-      } else if (/\s+(?:with|as|to|=)\s+/.test(stripped)) {
-        // Pattern B: "FIELD with|to|= VALUE"
-        const m = stripped.match(/^(.+?)\s+(?:with|as|to|=)\s+(.+)$/i);
-        if (m) { parsedField = m[1].trim(); parsedValue = m[2].trim(); }
+      if (asMatch) {
+        parsedValue = asMatch[1].trim();
+        parsedField = asMatch[2].trim().replace(/\s*(field|box|input|area)$/i, '').trim();
+      } else if (withMatch) {
+        parsedField = withMatch[1].trim().replace(/\s*(field|box|input|area)$/i, '').trim();
+        parsedValue = withMatch[2].trim();
       } else {
         // Pattern C (default): split on whitespace, try every split point
         // Longest prefix that matches an input label = field name, rest = value
