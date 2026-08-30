@@ -742,7 +742,8 @@
       contentSpeechRec = new SpeechRecognition();
       contentSpeechRec.continuous = true;
       contentSpeechRec.interimResults = true;
-      contentSpeechRec.lang = 'en-US';
+      // Auto-detect optimal regional speech language for Indian English / multilingual accuracy
+      contentSpeechRec.lang = navigator.language?.startsWith('en') ? 'en-IN' : (navigator.language || 'en-IN');
       isContentSpeechActive = true;
 
       contentSpeechRec.onresult = (event) => {

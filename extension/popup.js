@@ -535,7 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
       localSpeechRec = new SpeechRecognition();
       localSpeechRec.continuous = true;
       localSpeechRec.interimResults = true;
-      localSpeechRec.lang = 'en-US';
+      localSpeechRec.lang = navigator.language?.startsWith('en') ? 'en-IN' : (navigator.language || 'en-IN');
 
       localSpeechRec.onresult = (event) => {
         let interimText = '';
