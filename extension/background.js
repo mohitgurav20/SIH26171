@@ -382,40 +382,7 @@ async function handleUserCommand(commandPayload) {
 
     const elementsList = domData?.elements || [];
 
-    // --- UNIVERSAL AUTONOMOUS INTENT DETECTION ---
-    const detectedIntent = classifyIntent(commandPayload.text);
-    if (detectedIntent) {
-      const domFields = extractFormFieldsFromDOM(elementsList);
-      const quickActions = extractQuickActionButtonsFromDOM(elementsList);
-      const clarification = buildClarificationRequest(detectedIntent, commandPayload.text, domFields, quickActions, activeTab.title || '');
-
-      // Store active task state
-      activeTask = {
-        intent: detectedIntent,
-        fields: clarification.fields,
-        quickActions,
-        elements: elementsList,
-        activeTab,
-        status: 'waiting_for_info',
-        originalQuery: commandPayload.text
-      };
-
-      // If all required info already in the command — execute immediately
-      if (!clarification.hasMissingRequired) {
-        activeTask.fields = clarification.fields.map(f => ({ ...f, value: f.prefilled || f.default || '' }));
-        await executeTaskWorkflow(activeTask);
-      } else {
-        // Ask user for missing info via Side Panel dialog
-        broadcastStatus('thinking', `I need a few details to ${detectedIntent.confirmPrompt.toLowerCase()}...`);
-        chrome.runtime.sendMessage({
-          type: 'clarification_request',
-          payload: clarification
-        }).catch(() => {});
-      }
-      return;
-    }
-
-    // --- INSTANT ACTION EXECUTION (reflex for simple commands) ---
+    // --- INSTANT ACTION EXECUTION (Evaluates compound multi-step dictated flows first) ---
     const instantPlan = generateRealActionPlan(commandPayload.text, elementsList, activeTab.url);
 
     if (instantPlan && instantPlan.actions.length > 0) {
@@ -437,6 +404,33 @@ async function handleUserCommand(commandPayload) {
         payload: instantPlan
       }).catch(() => {});
       broadcastStatus('online', 'Agent Ready');
+      return;
+    }
+
+    // --- UNIVERSAL AUTONOMOUS INTENT DETECTION (Fallback only when command is underspecified) ---
+    const detectedIntent = classifyIntent(commandPayload.text);
+    if (detectedIntent) {
+      const domFields = extractFormFieldsFromDOM(elementsList);
+      const quickActions = extractQuickActionButtonsFromDOM(elementsList);
+      const clarification = buildClarificationRequest(detectedIntent, commandPayload.text, domFields, quickActions, activeTab.title || '');
+
+      // Store active task state
+      activeTask = {
+        intent: detectedIntent,
+        fields: clarification.fields,
+        quickActions,
+        elements: elementsList,
+        activeTab,
+        status: 'waiting_for_info',
+        originalQuery: commandPayload.text
+      };
+
+      // If all required info already in the command — execute immediately without dialog
+      if (!clarification.hasMissingRequired) {
+        activeTask.fields = clarification.fields.map(f => ({ ...f, value: f.prefilled || f.default || '' }));
+        await executeTaskWorkflow(activeTask);
+      }
+      return;
     }
 
     // Forward properly formatted request to native host for deep multi-step reasoning
@@ -836,8 +830,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 function parseCompoundWorkflow(query, elements) {
   if (!query || elements.length === 0) return null;
 
-  const rawSegments = query
-    .split(/\s+(?:and\s+then|then|after\s+that|and\s+also|also|and|,|;)\s+|\s+(?=(?:make|set|change|switch|turn|select|choose|click|press|tap|submit|create|save|fill|type|enter)\s+)/i)
+  // Normalize leading high-level goal wrappers like "create a new repository..."
+  const normalizedQuery = query
+    .replace(/^create\s+(?:a\s+)?(?:new\s+)?(?:repository|repo)\s+/i, '')
+    .replace(/^fill\s+(?:out\s+)?(?:this\s+)?(?:form\s+)?/i, '')
+    .trim();
+
+  const rawSegments = (normalizedQuery || query)
+    .split(/\s+(?:and\s+then|then|after\s+that|and\s+also|also|and|,|;)\s+|\s+(?=(?:make|set|change|switch|turn|select|choose|click|press|tap|submit|create|save|fill|type|enter|name\s+it|named)\s+)/i)
     .map(s => s.trim())
     .filter(s => s.length > 1);
 
@@ -858,23 +858,31 @@ function parseCompoundWorkflow(query, elements) {
 
     // ── 1. TYPE / FORM FILL INTENT ───────────────────────────────────────────
     const typeMatch = segment.match(/^(?:enter|type|write|input|fill\s+in|fill|put\s+in|put|set)\s+(.+)$/i);
-    if (typeMatch) {
-      const rest = typeMatch[1].trim();
-      const asMatch = rest.match(/^(.+?)\s+(?:as|in(?:to)?|inside|for)\s+(?:the\s+)?(.+)$/i);
-      const withMatch = rest.match(/^(.+?)\s+(?:with|to|=)\s+(.+)$/i);
+    const namedMatch = segment.match(/(?:name\s+it|named|name|called)\s+(.+)$/i);
 
+    if (typeMatch || namedMatch) {
       let val = null;
       let fieldName = null;
 
-      if (asMatch) {
-        val = asMatch[1].trim();
-        fieldName = asMatch[2].trim().replace(/\s*(field|box|input|area)$/i, '');
-      } else if (withMatch) {
-        fieldName = withMatch[1].trim().replace(/\s*(field|box|input|area)$/i, '');
-        val = withMatch[2].trim();
+      if (namedMatch) {
+        val = namedMatch[1].trim().replace(/\s+(?:and|make|set|as|with|just).*$/i, '');
+        fieldName = 'repository name';
+      } else if (typeMatch) {
+        const rest = typeMatch[1].trim();
+        const asMatch = rest.match(/^(.+?)\s+(?:as|in(?:to)?|inside|for)\s+(?:the\s+)?(.+)$/i);
+        const withMatch = rest.match(/^(.+?)\s+(?:with|to|=)\s+(.+)$/i);
+
+        if (asMatch) {
+          val = asMatch[1].trim();
+          fieldName = asMatch[2].trim().replace(/\s*(field|box|input|area)$/i, '');
+        } else if (withMatch) {
+          fieldName = withMatch[1].trim().replace(/\s*(field|box|input|area)$/i, '');
+          val = withMatch[2].trim();
+        }
       }
 
-      if (val && fieldName) {
+      if (val) {
+        if (!fieldName) fieldName = 'name';
         const fieldWords = fieldName.toLowerCase().split(/\s+/).filter(w => w.length > 1);
         let bestInput = null;
         let bestScore = 0;
