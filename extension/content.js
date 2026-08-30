@@ -558,6 +558,26 @@
             result.success = true;
             break;
 
+          case 'navigate':
+            if (step.value) {
+              window.location.href = step.value;
+            }
+            result.success = true;
+            result.page_changed = true;
+            break;
+
+          case 'back':
+            window.history.back();
+            result.success = true;
+            result.page_changed = true;
+            break;
+
+          case 'reload':
+            window.location.reload();
+            result.success = true;
+            result.page_changed = true;
+            break;
+
           case 'wait':
             await sleep(step.value || 1000);
             result.success = true;
