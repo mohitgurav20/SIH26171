@@ -109,6 +109,13 @@
 
     if (INTERACTIVE_TAGS.has(tagName)) return true;
 
+    if (tagName === 'IFRAME') {
+      const title = (node.getAttribute('title') || node.getAttribute('aria-label') || node.id || node.src || '').toLowerCase();
+      if (title.includes('sign in') || title.includes('google') || title.includes('auth') || title.includes('login') || title.includes('continue') || title.includes('gsi')) {
+        return true;
+      }
+    }
+
     const role = node.getAttribute('role');
     if (role && INTERACTIVE_ROLES.has(role.toLowerCase())) return true;
 

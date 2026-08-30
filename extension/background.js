@@ -839,6 +839,10 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // Web Speech API commonly mishears proper nouns. Fix before any intent logic.
   // =========================================================================
   const PHONETIC_FIXES = [
+    // Continue as / SSO fixes ("continue has mohit", "continue us", "continue has")
+    [/\bcontinue\s+has\b/g,            'continue as'],
+    [/\bcontinue\s+us\b/g,             'continue as'],
+    [/\bhas\s+mohit\b/g,               'as mohit'],
     // GitHub (most common — "guitar", "get hub", "git hub", "get up", "github")
     [/\bguitar\b/g,                   'github'],
     [/\bget hub\b/g,                   'github'],
@@ -1129,7 +1133,7 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
   // =========================================================================
   if (elements.length > 0) {
     const searchTerms = cleanQ
-      .replace(/^(?:choose|select|pick|open|get into|into|go to|click on|click|visit|tap|login|enter|create|make|add)\s+(?:the\s+)?(?:a\s+)?/i, '')
+      .replace(/^(?:choose|select|pick|open|get into|into|go to|click on|click|visit|tap|login|enter|create|make|add|continue as|continue with|continue)\s+(?:the\s+)?(?:a\s+)?/i, '')
       .replace(/\s+(?:on the website|on website|on page|language|website|site|page|portal|url|link)$/i, '')
       .trim();
 
@@ -1145,14 +1149,15 @@ function generateRealActionPlan(query, elements, currentUrl = '') {
       if (!elText && !elHref) continue;
 
       let score = 0;
-      const words = (searchTerms || cleanQ).split(/\s+/).filter(w => w.length > 2 && w !== 'the' && w !== 'this');
+      const words = (searchTerms || cleanQ).split(/\s+/).filter(w => w.length >= 2 && w !== 'the' && w !== 'this');
       for (const w of words) {
-        if (elText.includes(w)) score += 30;
+        if (elText.includes(w)) score += 35;
         if (elHref.includes(w)) score += 20;
       }
       if (searchTerms && elText.includes(searchTerms)) score += 60;
-      if (elText.includes('privacy') || elText.includes('terms') || elText === 'google' || elText === 'sign in') score -= 40;
-      if (el.role === 'button' || el.tag === 'button' || (el.role === 'link' && el.text?.length > 3) || el.tag === 'a') score += 10;
+      if (cleanQ.includes('continue') && elText.includes('continue')) score += 40;
+      if (elText.includes('privacy policy') || elText.includes('terms of service')) score -= 40;
+      if (el.role === 'button' || el.tag === 'button' || (el.role === 'link' && el.text?.length > 3) || el.tag === 'a' || el.tag === 'iframe') score += 15;
 
       // Smart alias bonuses
       if ((cleanQ.includes('repo') || cleanQ.includes('repository')) && (elText === 'new' || elHref === '/new' || elHref.endsWith('/new'))) {
