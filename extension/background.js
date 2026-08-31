@@ -532,7 +532,7 @@ function decomposeGoalIntoSteps(query, currentUrl) {
   // ── 3. UNIVERSAL LOGIN / SIGN IN / CREDENTIALS WORKFLOW ON ANY SITE ───────
   const isLoginGoal = /\b(?:log\s*in|sign\s*in|login|signin|enter\s*(?:my\s*)?account|credentials)\b/i.test(remainingQuery || q);
   if (isLoginGoal) {
-    const isGoogleOrCredentialSSO = /\b(?:google|first\s+email|default\s+email|my\s+email|first\s+account|credentials|first)\b/i.test(remainingQuery || q);
+    const isGoogleOrCredentialSSO = /\b(?:google|first\s+email|default\s+email|my\s+email|first\s+account|credentials|first|account)\b/i.test(remainingQuery || q);
 
     // Step 1: Click Sign In / Login button on homepage to enter login view
     steps.push({ type: 'click', target: 'Sign in Log in Login', label: 'Click Sign in / Login' });
@@ -540,9 +540,22 @@ function decomposeGoalIntoSteps(query, currentUrl) {
     // Step 2: If SSO / Credentials / Google mentioned, click Continue with Google
     if (isGoogleOrCredentialSSO) {
       steps.push({ type: 'click', target: 'Continue with Google Sign in with Google Log in with Google Google', label: 'Click Continue with Google' });
+
+      // Step 3: On Google Account Chooser screen -> Select Account!
+      const userMatch = (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)$/i)
+                     || (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)\b/i);
+      let targetUser = userMatch ? userMatch[1].trim() : null;
+      const reserved = ['login', 'signin', 'my', 'first', 'account', 'email', 'user', 'the', 'a', 'it', 'password', 'credentials', 'google'];
+      if (reserved.includes(targetUser?.toLowerCase())) targetUser = null;
+
+      if (targetUser) {
+        steps.push({ type: 'click', target: `Google Account ${targetUser}`, label: `Select account "${targetUser}"` });
+      } else {
+        steps.push({ type: 'click', target: 'Google Account first email account', label: 'Select first Google account' });
+      }
     }
 
-    // Step 3: Type username/email if explicitly mentioned (e.g. as mohit / with email x@gmail.com)
+    // Step 4: Type username/email if explicitly mentioned (e.g. as mohit / with email x@gmail.com)
     const userMatch = (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)$/i)
                    || (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)\b/i);
     let username = userMatch ? userMatch[1].trim() : null;
@@ -553,7 +566,7 @@ function decomposeGoalIntoSteps(query, currentUrl) {
       steps.push({ type: 'type', field: 'username email login identifier', value: username, label: `Enter username/email "${username}"` });
     }
 
-    // Step 4: Password if provided
+    // Step 5: Password if provided
     const passMatch = (remainingQuery || q).match(/\b(?:password|pass)\s+(?:is\s+)?([a-zA-Z0-9@#$_.\-]+)/i);
     let password = passMatch ? passMatch[1].trim() : null;
     if (['is', 'and', 'my', 'the'].includes(password?.toLowerCase())) password = null;
@@ -753,8 +766,39 @@ function resolveStepToActions(step, elements) {
 
   if (step.type === 'click') {
     const rawTarget = step.target.toLowerCase();
-    const targetWords = rawTarget.split(/\s+/).filter(w => w.length >= 3);
     const clickableEls = elements.filter(el => !isInputEl(el) || el.type === 'radio' || el.type === 'button' || el.type === 'submit');
+
+    // Dedicated Google Account Chooser handler (e.g. accounts.google.com)
+    const isGoogleAccountChooser = elements.some(e => {
+      const t = (e.text || e.aria_label || '').toLowerCase();
+      return t.includes('@gmail.com') || t.includes('@') || t.includes('choose an account');
+    });
+
+    if (rawTarget.includes('google account') || (isGoogleAccountChooser && rawTarget.includes('account'))) {
+      const accountTiles = clickableEls.filter(el => {
+        const text = (el.text || el.aria_label || '').toLowerCase();
+        return (text.includes('@') || text.includes('gmail') || el.role === 'link' || el.tag === 'li' || el.tag === 'button') &&
+               !isInputEl(el) && !text.includes('use another account');
+      });
+
+      if (rawTarget.includes('first') && accountTiles.length > 0) {
+        return [{ step: 0, tag_id: accountTiles[0].tag_id, action: 'click', description: step.label }];
+      }
+
+      const cleanTarget = rawTarget.replace(/google\s*account/g, '').replace(/first\s*email\s*account/g, '').trim();
+      if (cleanTarget && accountTiles.length > 0) {
+        const matched = accountTiles.find(el => (el.text || el.aria_label || '').toLowerCase().includes(cleanTarget));
+        if (matched) {
+          return [{ step: 0, tag_id: matched.tag_id, action: 'click', description: step.label }];
+        }
+      }
+
+      if (accountTiles.length > 0) {
+        return [{ step: 0, tag_id: accountTiles[0].tag_id, action: 'click', description: step.label }];
+      }
+    }
+
+    const targetWords = rawTarget.split(/\s+/).filter(w => w.length >= 3);
     let bestEl = null, bestScore = 0;
     for (const el of clickableEls) {
       const lbl = getLabel(el);
@@ -781,6 +825,7 @@ function resolveStepToActions(step, elements) {
 
   return actions;
 }
+
 
 function broadcastStepProgress() {
   if (!activeTask) return;
