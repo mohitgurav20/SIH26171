@@ -589,8 +589,8 @@ function decomposeGoalIntoSteps(query, currentUrl) {
 
 // ============================================================================
 // STEP QUEUE EXECUTOR
-// Runs the StepQueue one step at a time, with DOM-aware action dispatch
-// and automatic resume after page navigations.
+// Runs the StepQueue one step at a time, with DOM-aware action dispatch,
+// dynamic SPA retry logic, and automatic resume after page navigations.
 // ============================================================================
 async function runStepQueue(tabId) {
   if (!activeTask || activeTask.status === 'done') return;
@@ -623,7 +623,7 @@ async function runStepQueue(tabId) {
     return;
   }
 
-  // ── DOM-based steps: extract DOM first ────────────────────────────────────
+  // ── DOM-based steps: extract DOM with dynamic SPA retry ────────────────────
   let elements = [];
   try {
     const response = await chrome.tabs.sendMessage(tabId, { type: 'extract_dom', render_overlays: false });
@@ -631,7 +631,7 @@ async function runStepQueue(tabId) {
   } catch (e) {
     try {
       await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 250));
       const r2 = await chrome.tabs.sendMessage(tabId, { type: 'extract_dom', render_overlays: false });
       elements = r2?.payload?.elements || [];
     } catch (e2) {
@@ -642,11 +642,17 @@ async function runStepQueue(tabId) {
   // Build a mini action plan for this single step using DOM matching
   const actions = resolveStepToActions(step, elements);
 
+  // If DOM element not found yet, retry up to 4 times (gives dynamic SPAs up to 2.5s to render)
   if (actions.length === 0) {
-    console.warn('[SQ] Could not resolve step to DOM element:', step);
+    step._retries = (step._retries || 0) + 1;
+    if (step._retries <= 4) {
+      console.log(`[SQ] Element for step "${step.label}" not ready yet in DOM, retrying (${step._retries}/4)...`);
+      setTimeout(() => runStepQueue(tabId), 600);
+      return;
+    }
+    console.warn('[SQ] Could not resolve step to DOM element after retries:', step);
     step.status = 'skipped';
     broadcastStepProgress();
-    // Continue to next step anyway
     setTimeout(() => runStepQueue(tabId), 400);
     return;
   }
@@ -667,8 +673,8 @@ async function runStepQueue(tabId) {
     step.status = 'done';
     broadcastStepProgress();
     broadcastStatus('acting', `✓ ${step.label}`);
-    // Advance to next step
-    await new Promise(r => setTimeout(r, 600));
+    // Allow 800ms for DOM transitions or AJAX requests
+    await new Promise(r => setTimeout(r, 800));
     runStepQueue(tabId);
   } catch (err) {
     step.status = 'failed';
@@ -686,7 +692,7 @@ function resolveStepToActions(step, elements) {
   const isInputEl = (el) =>
     el.tag === 'input' || el.tag === 'textarea' || el.role === 'textbox' || el.role === 'searchbox';
   const getLabel = (el) =>
-    (el.text || el.aria_label || el.placeholder || el.name || el.id || '').toLowerCase();
+    (el.text || el.aria_label || el.placeholder || el.name || el.id || el.value || '').toLowerCase();
 
   if (step.type === 'type') {
     const fieldWords = step.field.toLowerCase().split(/\s+/).filter(w => w.length > 1);
@@ -697,6 +703,7 @@ function resolveStepToActions(step, elements) {
       let score = fieldWords.reduce((s, w) => s + (lbl.includes(w) ? 40 : 0), 0);
       if (lbl.includes(step.field.toLowerCase())) score += 60;
       if (el.name?.includes('repo') || el.id?.includes('repo') || el.placeholder?.includes('repo')) score += 50;
+      if (el.name?.includes('login') || el.id?.includes('login') || el.placeholder?.includes('login') || el.name?.includes('email')) score += 50;
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
     if (!bestEl && inputEls.length > 0) bestEl = inputEls[0];
@@ -723,14 +730,21 @@ function resolveStepToActions(step, elements) {
   }
 
   if (step.type === 'click') {
-    const targetWords = step.target.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-    const clickableEls = elements.filter(el => !isInputEl(el) || el.type === 'radio');
+    const rawTarget = step.target.toLowerCase();
+    const targetWords = rawTarget.split(/\s+/).filter(w => w.length >= 3);
+    const clickableEls = elements.filter(el => !isInputEl(el) || el.type === 'radio' || el.type === 'button' || el.type === 'submit');
     let bestEl = null, bestScore = 0;
     for (const el of clickableEls) {
       const lbl = getLabel(el);
-      let score = targetWords.reduce((s, w) => s + (lbl.includes(w) ? 35 : 0), 0);
-      if (lbl.includes(step.target.toLowerCase())) score += 60;
+      if (!lbl) continue;
+      let score = 0;
+      for (const w of targetWords) {
+        if (lbl.includes(w)) score += 35;
+      }
+      if (rawTarget.includes(lbl) || lbl.includes(rawTarget)) score += 60;
+      if (lbl === 'sign in' || lbl === 'log in' || lbl === 'login' || lbl === 'signin') score += 50;
       if (el.tag === 'button' || el.role === 'button' || el.type === 'submit') score += 20;
+      if (el.tag === 'a' || el.role === 'link') score += 15;
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
     if (bestEl && bestScore >= 20) {
@@ -744,7 +758,6 @@ function resolveStepToActions(step, elements) {
 
   return actions;
 }
-
 
 function broadcastStepProgress() {
   if (!activeTask) return;
@@ -765,7 +778,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete') return;
   if (!activeTask || activeTask.status !== 'navigating') return;
 
-  // Wait for page JS to initialize then resume
+  // Wait 1.2s for SPA hydration (e.g. React/Vue router mounting on LeetCode/GitHub)
   setTimeout(async () => {
     try {
       activeTask.status = 'running';
@@ -774,7 +787,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     } catch (e) {
       console.warn('[SQ] Resume after navigation failed:', e.message);
     }
-  }, 1000);
+  }, 1200);
 });
 
 // ============================================================================
