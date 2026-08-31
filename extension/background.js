@@ -435,6 +435,12 @@ const KNOWN_SITE_DOMAINS = {
   netflix: 'https://www.netflix.com',
   udemy: 'https://www.udemy.com',
   kaggle: 'https://www.kaggle.com',
+  leetcode: 'https://leetcode.com',
+  tryhackme: 'https://tryhackme.com',
+  geeksforgeeks: 'https://www.geeksforgeeks.org',
+  hackerrank: 'https://www.hackerrank.com',
+  codechef: 'https://www.codechef.com',
+  stackoverflow: 'https://stackoverflow.com',
 };
 
 // ============================================================================
@@ -455,11 +461,6 @@ function stepSelect(field, value, label) {
 
 // ============================================================================
 // GOAL DECOMPOSER
-// Parses a full natural language command into an ordered StepQueue[].
-// Handles cross-page, multi-site, multi-action compound sentences.
-// ============================================================================
-// ============================================================================
-// GOAL DECOMPOSER
 // Parses any natural language command into an ordered StepQueue[].
 // Handles cross-page, multi-site, multi-action compound sentences autonomously.
 // ============================================================================
@@ -467,13 +468,16 @@ function decomposeGoalIntoSteps(query, currentUrl) {
   let q = query.toLowerCase().trim();
   const steps = [];
 
-  // ── PHONETIC CORRECTION ────────────────────────────────────────────────────
+  // ── PHONETIC & MULTI-WORD BRAND CORRECTION ─────────────────────────────────
   const PHONETIC = [
     [/\bcontinue\s+has\b/gi, 'continue as'],
-    [/\bguitar\b/gi, 'github'], [/\bget hub\b/gi, 'github'], [/\bgit hub\b/gi, 'github'],
+    [/\btry\s*hack\s*me\b/gi, 'tryhackme'],
+    [/\bguitar\b/gi, 'github'], [/\bget hub\b/gi, 'github'], [/\bgit\s*hub\b/gi, 'github'],
     [/\byou\s*tube\b/gi, 'youtube'], [/\blinked\s+in\b/gi, 'linkedin'],
-    [/\binsta\s*gram\b/gi, 'instagram'], [/\bchat\s+g\s*p\s*t\b/gi, 'chatgpt'],
+    [/\binsta\s*gram\b/gi, 'instagram'], [/\bchat\s*g\s*p\s*t\b/gi, 'chatgpt'],
     [/\blead\s*code\b/gi, 'leetcode'], [/\bleet\s*code\b/gi, 'leetcode'],
+    [/\bcode\s*chef\b/gi, 'codechef'], [/\bhacker\s*rank\b/gi, 'hackerrank'],
+    [/\bstack\s*overflow\b/gi, 'stackoverflow'], [/\bgeeks\s*for\s*geeks\b/gi, 'geeksforgeeks'],
   ];
   for (const [p, r] of PHONETIC) q = q.replace(p, r);
 
@@ -508,9 +512,11 @@ function decomposeGoalIntoSteps(query, currentUrl) {
   let siteUrl = null;
   let remainingQuery = q;
 
-  const siteMatch = q.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+([a-zA-Z0-9_\-\.]+)(?:\s+(?:website|app|page))?\b\s*(.*)$/i);
+  const siteMatch = q.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+(?:(?:the|my)\s+)?(.+?)(?:\s+(?:website|app|page|site))?\s+(?:and\s+then|then|and|to|with|\&|;)\s+(.*)$/i)
+                 || q.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+(?:(?:the|my)\s+)?(.+?)(?:\s+(?:website|app|page|site))?$/i);
+
   if (siteMatch) {
-    const rawSite = siteMatch[1].toLowerCase();
+    let rawSite = siteMatch[1].trim().toLowerCase().replace(/\s+/g, '');
     remainingQuery = siteMatch[2]?.trim() || '';
 
     if (KNOWN_SITE_DOMAINS[rawSite]) {
