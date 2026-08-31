@@ -313,6 +313,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         break;
 
+      case 'step_progress':
+        renderStepProgress(message.payload);
+        break;
+
       case 'transcription':
         if (message.payload?.text) {
           commandInput.value = message.payload.text;
@@ -642,8 +646,67 @@ document.addEventListener('DOMContentLoaded', () => {
       if (alwaysOnMode) scheduleAutoResumeListen();
     }
   }
+  // Render Step Progress (from StepQueue executor in background.js)
+  function renderStepProgress(payload) {
+    if (!payload || !payload.steps) return;
+
+    const { goal, steps, currentStep } = payload;
+
+    // Show goal in reasoning box
+    if (goal) {
+      reasoningBox.innerHTML = `<strong>Goal:</strong> ${escapeHtml(goal)}`;
+    }
+
+    planMeta.style.display = 'flex';
+    confidenceBadge.textContent = `${steps.length} Steps`;
+    sourceBadge.textContent = 'AUTO-PLAN';
+    planStepsContainer.style.display = 'flex';
+    planStepsList.innerHTML = '';
+
+    const STATUS_ICONS = {
+      pending: '⏳',
+      running: '▶',
+      done: '✓',
+      skipped: '↩',
+      failed: '✗'
+    };
+    const STATUS_COLORS = {
+      pending: '#9ca3af',
+      running: '#f59e0b',
+      done: '#059669',
+      skipped: '#6b7280',
+      failed: '#ef4444'
+    };
+
+    steps.forEach((step, idx) => {
+      const stepDiv = document.createElement('div');
+      stepDiv.className = 'step-item' + (step.status === 'done' ? ' done' : '');
+      stepDiv.id = `sq-step-${step.id}`;
+
+      const icon = STATUS_ICONS[step.status] || '⏳';
+      const color = STATUS_COLORS[step.status] || '#9ca3af';
+      const isActive = step.status === 'running';
+
+      stepDiv.innerHTML = `
+        <div class="step-info" style="display:flex; align-items:center; gap:6px; ${isActive ? 'animation: pulse 1s infinite;' : ''}">
+          <span style="font-weight:700; color:${color}; font-size:13px;">${icon}</span>
+          <span style="font-weight:600; font-size:10px; background:#ffe4e6; color:#e11d48; padding:1px 5px; border-radius:4px;">${(idx + 1)}</span>
+          <span style="color:${isActive ? '#e11d48' : 'inherit'}; font-weight:${isActive ? '600' : '400'};">${escapeHtml(step.label)}</span>
+        </div>
+        <span style="font-size:10px; font-weight:700; color:${color};">${step.status.toUpperCase()}</span>
+      `;
+      planStepsList.appendChild(stepDiv);
+    });
+
+    const allDone = steps.every(s => s.status === 'done' || s.status === 'skipped');
+    if (allDone) {
+      updateStatus('online', 'Goal Complete ✓');
+      if (alwaysOnMode) scheduleAutoResumeListen();
+    }
+  }
 
   // Update Step Execution Result
+
   function updateStepResult(result) {
     if (!result) return;
     const stepNum = result.step_index;

@@ -307,142 +307,92 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Full command pipeline
+// Full command pipeline — StepQueue-based intelligent flow executor
 async function handleUserCommand(commandPayload) {
-  broadcastStatus('thinking', 'Extracting page DOM & capturing context...');
+  broadcastStatus('thinking', 'Understanding your command...');
 
   try {
     let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-    if (!tabs || !tabs[0]) {
-      tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    }
-    if (!tabs || !tabs[0]) {
-      tabs = await chrome.tabs.query({ active: true });
-    }
-    if (!tabs || !tabs[0]) {
-      throw new Error('No active browser tab found');
-    }
+    if (!tabs || !tabs[0]) tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tabs || !tabs[0]) tabs = await chrome.tabs.query({ active: true });
+    if (!tabs || !tabs[0]) throw new Error('No active browser tab found');
 
     const activeTab = tabs[0];
-    let domData = null;
-    let screenshot = null;
+    const query = commandPayload.text || '';
 
-    // Check if valid prefetch exists for this URL
-    if (prefetchedState && prefetchedState.url === activeTab.url && (Date.now() - prefetchedState.timestamp < 3000)) {
-      console.log('[Background] Task 105: Utilizing prefetched DOM & screenshot!');
-      domData = prefetchedState.dom;
-      screenshot = prefetchedState.screenshot;
-      prefetchedState = null;
-    } else {
-      // Normal fetch with auto-inject fallback
-      try {
-        const response = await chrome.tabs.sendMessage(activeTab.id, {
-          type: 'extract_dom',
-          render_overlays: false
-        });
-        if (response && response.payload) {
-          domData = response.payload;
-        }
-      } catch (err) {
-        console.warn('[Background] Content script not connected, auto-injecting into tab:', err);
-        if (activeTab.id && !activeTab.url?.startsWith('chrome://') && !activeTab.url?.startsWith('edge://')) {
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: activeTab.id },
-              files: ['content.js']
-            });
-            await new Promise(r => setTimeout(r, 120));
-            const retryRes = await chrome.tabs.sendMessage(activeTab.id, {
-              type: 'extract_dom',
-              render_overlays: false
-            });
-            if (retryRes && retryRes.payload) {
-              domData = retryRes.payload;
-            }
-          } catch(injectErr) {
-            console.warn('[Background] Script injection retry failed:', injectErr);
-          }
-        }
-      }
+    // ── PHASE 1: Decompose the full natural language sentence into a StepQueue
+    const steps = decomposeGoalIntoSteps(query, activeTab.url);
 
-      screenshot = await captureActiveTabScreenshot();
+    if (steps && steps.length > 0) {
+      console.log('[SQ] Decomposed into', steps.length, 'steps:', steps.map(s => s.label));
+      activeTask = {
+        goal: query,
+        steps,
+        status: 'running'
+      };
+      broadcastStatus('thinking', `Planning ${steps.length} steps for: "${query.slice(0, 50)}..."`);
+      broadcastStepProgress();
+      await runStepQueue(activeTab.id);
+      return;
     }
 
-    // Format PageState object matching voicc_host schema
-    const pageState = domData ? {
-      url: activeTab.url || '',
-      title: activeTab.title || '',
-      elements: domData.elements || [],
-      changed_tag_ids: domData.changed_tag_ids || [],
-      has_opaque_regions: domData.has_opaque_regions || false,
-      layout_hash: domData.layout_hash || '',
-      dom_payload_bytes: domData.dom_payload_bytes || 0,
-      raw_html_bytes: domData.raw_html_bytes || 0
-    } : null;
+    // ── PHASE 2: Fallback — try single-page DOM action plan (no navigation needed)
+    let domData = null;
+    try {
+      if (prefetchedState && prefetchedState.url === activeTab.url && (Date.now() - prefetchedState.timestamp < 3000)) {
+        domData = prefetchedState.dom;
+        prefetchedState = null;
+      } else {
+        const response = await chrome.tabs.sendMessage(activeTab.id, { type: 'extract_dom', render_overlays: false });
+        if (response?.payload) domData = response.payload;
+      }
+    } catch (err) {
+      // Auto-inject content script if not present
+      if (activeTab.id && !activeTab.url?.startsWith('chrome://') && !activeTab.url?.startsWith('edge://')) {
+        try {
+          await chrome.scripting.executeScript({ target: { tabId: activeTab.id }, files: ['content.js'] });
+          await new Promise(r => setTimeout(r, 150));
+          const r2 = await chrome.tabs.sendMessage(activeTab.id, { type: 'extract_dom', render_overlays: false });
+          if (r2?.payload) domData = r2.payload;
+        } catch (e) { console.warn('[Background] Auto-inject failed:', e); }
+      }
+    }
 
     const elementsList = domData?.elements || [];
 
-    // --- INSTANT ACTION EXECUTION (Evaluates compound multi-step dictated flows first) ---
-    const instantPlan = generateRealActionPlan(commandPayload.text, elementsList, activeTab.url);
-
+    // Try single-page compound action plan
+    const instantPlan = generateRealActionPlan(query, elementsList, activeTab.url);
     if (instantPlan && instantPlan.actions.length > 0) {
-      if (activeTab.id && !activeTab.url?.startsWith('chrome://') && !activeTab.url?.startsWith('edge://')) {
-        chrome.tabs.sendMessage(activeTab.id, {
-          type: 'execute_actions',
-          payload: instantPlan
-        }).catch(() => {});
+      if (activeTab.id && !activeTab.url?.startsWith('chrome://')) {
+        chrome.tabs.sendMessage(activeTab.id, { type: 'execute_actions', payload: instantPlan }).catch(() => {});
       }
-      chrome.runtime.sendMessage({
-        type: 'action_plan',
-        payload: instantPlan
-      }).catch(() => {});
-      broadcastStatus('online', `Completed: ${instantPlan.actions[0].description}`);
-      return;
-    } else if (instantPlan) {
-      chrome.runtime.sendMessage({
-        type: 'action_plan',
-        payload: instantPlan
-      }).catch(() => {});
-      broadcastStatus('online', 'Agent Ready');
+      chrome.runtime.sendMessage({ type: 'action_plan', payload: instantPlan }).catch(() => {});
+      broadcastStatus('online', `Done: ${instantPlan.actions[0].description}`);
       return;
     }
 
-    // --- UNIVERSAL AUTONOMOUS INTENT DETECTION (Fallback only when command is underspecified) ---
-    const detectedIntent = classifyIntent(commandPayload.text);
-    if (detectedIntent) {
-      const domFields = extractFormFieldsFromDOM(elementsList);
-      const quickActions = extractQuickActionButtonsFromDOM(elementsList);
-      const clarification = buildClarificationRequest(detectedIntent, commandPayload.text, domFields, quickActions, activeTab.title || '');
+    // ── PHASE 3: Forward to native host for deep reasoning
+    const screenshot = await captureActiveTabScreenshot();
+    const pageState = domData ? {
+      url: activeTab.url || '',
+      title: activeTab.title || '',
+      elements: elementsList,
+      changed_tag_ids: domData.changed_tag_ids || [],
+      has_opaque_regions: domData.has_opaque_regions || false,
+      layout_hash: domData.layout_hash || ''
+    } : null;
 
-      // Store active task state
-      activeTask = {
-        intent: detectedIntent,
-        fields: clarification.fields,
-        quickActions,
-        elements: elementsList,
-        activeTab,
-        status: 'waiting_for_info',
-        originalQuery: commandPayload.text
-      };
-
-      // If all required info already in the command — execute immediately without dialog
-      if (!clarification.hasMissingRequired) {
-        activeTask.fields = clarification.fields.map(f => ({ ...f, value: f.prefilled || f.default || '' }));
-        await executeTaskWorkflow(activeTask);
-      }
-      return;
-    }
-
-    // Forward properly formatted request to native host for deep multi-step reasoning
     if (nativePort) {
       forwardToNativeHost({
         type: 'command',
         id: `cmd-${Date.now()}`,
-        task: commandPayload.text,
+        task: query,
         page: pageState,
         image_b64: screenshot?.image_base64 || '',
-        visible_tags: domData?.elements ? domData.elements.map(e => e.tag_id) : []
+        visible_tags: elementsList.map(e => e.tag_id)
       });
+    } else {
+      broadcastStatus('online', 'Command received — native host not connected');
     }
 
   } catch (error) {
@@ -451,382 +401,420 @@ async function handleUserCommand(commandPayload) {
   }
 }
 
+
 // ============================================================================
-// UNIVERSAL AUTONOMOUS AGENT SYSTEM
-// One command → Ask only what's needed → Execute everything
+// GOAL DECOMPOSITION → STEP QUEUE → CROSS-PAGE EXECUTOR
+// The agent breaks any natural language command into ordered steps,
+// runs each step, and resumes automatically after page navigations.
+// ZERO popup dialogs for compound flows.
 // ============================================================================
 
-// Active task state: persists across page navigations
+// Active step queue state — persists across page navigations
 let activeTask = null;
 
-// Universal intent definitions — detects high-level goals on ANY website
-const UNIVERSAL_INTENTS = [
-  {
-    id: 'LOGIN',
-    patterns: [/\blog\s*in\b/i, /\bsign\s*in\b/i, /\blogin\b/i, /\benter\s*(my\s*)?account\b/i],
-    requiredFields: [
-      { key: 'username', label: 'Email or Username', type: 'text', optional: false },
-      { key: 'password', label: 'Password', type: 'password', optional: false }
-    ],
-    confirmPrompt: 'Log in with your credentials'
-  },
-  {
-    id: 'REGISTER',
-    patterns: [/\bregister\b/i, /\bsign\s*up\b/i, /\bcreate\s*account\b/i, /\bjoin\b/i],
-    requiredFields: [
-      { key: 'name', label: 'Full Name', type: 'text', optional: false },
-      { key: 'email', label: 'Email', type: 'text', optional: false },
-      { key: 'password', label: 'Password', type: 'password', optional: false },
-      { key: 'phone', label: 'Phone Number', type: 'text', optional: true }
-    ],
-    confirmPrompt: 'Register a new account'
-  },
-  {
-    id: 'CREATE_REPO',
-    patterns: [/\bcreate\s*(a\s*)?repo\b/i, /\bcreate\s*(a\s*)?repository\b/i, /\bnew\s*repo\b/i, /\bnew\s*repository\b/i],
-    siteHint: 'github.com',
-    requiredFields: [
-      { key: 'name', label: 'Repository Name', type: 'text', optional: false },
-      { key: 'description', label: 'Description', type: 'text', optional: true },
-      { key: 'visibility', label: 'Visibility (public/private)', type: 'text', optional: true, default: 'public' }
-    ],
-    navigationUrl: 'https://github.com/new',
-    confirmPrompt: 'Create a new GitHub repository'
-  },
-  {
-    id: 'SEARCH',
-    patterns: [/\bsearch\s+for\b/i, /\bfind\b/i, /\blook\s+for\b/i, /\bquery\b/i],
-    requiredFields: [
-      { key: 'query', label: 'What to search for', type: 'text', optional: false }
-    ],
-    confirmPrompt: 'Search on this page'
-  },
-  {
-    id: 'SEND_MESSAGE',
-    patterns: [/\bsend\s*(a\s*)?message\b/i, /\bcompose\b/i, /\bwrite\s*(an?\s*)?email\b/i, /\bemail\s+to\b/i],
-    requiredFields: [
-      { key: 'recipient', label: 'To (name or email)', type: 'text', optional: false },
-      { key: 'subject', label: 'Subject', type: 'text', optional: true },
-      { key: 'body', label: 'Message body', type: 'text', optional: false }
-    ],
-    confirmPrompt: 'Compose and send a message'
-  },
-  {
-    id: 'FILL_FORM',
-    patterns: [/\bfill\s*(this\s*)?form\b/i, /\bfill\s*(this\s*)?out\b/i, /\bcomplete\s*(the\s*)?form\b/i, /\bsubmit\s*(this\s*)?form\b/i],
-    requiredFields: [],  // Dynamically populated from page DOM
-    confirmPrompt: 'Fill and submit this form'
-  },
-  {
-    id: 'JOB_APPLY',
-    patterns: [/\bapply\s*(for\s*)?(this\s*)?job\b/i, /\bsubmit\s*application\b/i],
-    requiredFields: [
-      { key: 'name', label: 'Full Name', type: 'text', optional: false },
-      { key: 'email', label: 'Email', type: 'text', optional: false },
-      { key: 'phone', label: 'Phone Number', type: 'text', optional: true },
-      { key: 'experience', label: 'Years of experience', type: 'text', optional: true }
-    ],
-    confirmPrompt: 'Apply for this job'
-  },
-  {
-    id: 'CHECKOUT',
-    patterns: [/\bcheckout\b/i, /\bbuy\s*(this|now)?\b/i, /\bpurchase\b/i, /\bplace\s*order\b/i],
-    requiredFields: [
-      { key: 'name', label: 'Full Name', type: 'text', optional: false },
-      { key: 'address', label: 'Delivery Address', type: 'text', optional: false },
-      { key: 'pincode', label: 'PIN Code', type: 'text', optional: false },
-      { key: 'phone', label: 'Phone Number', type: 'text', optional: false }
-    ],
-    confirmPrompt: 'Complete checkout and place order'
-  },
-  {
-    id: 'BOOK',
-    patterns: [/\bbook\b/i, /\breserve\b/i, /\bschedule\b/i],
-    requiredFields: [
-      { key: 'date', label: 'Date', type: 'text', optional: false },
-      { key: 'destination', label: 'Destination / Venue', type: 'text', optional: true },
-      { key: 'passengers', label: 'Number of passengers/guests', type: 'text', optional: true, default: '1' }
-    ],
-    confirmPrompt: 'Make a booking or reservation'
-  },
-  {
-    id: 'POST_UPDATE',
-    patterns: [/\bpost\b/i, /\bshare\b/i, /\btweet\b/i, /\bpublish\b/i, /\bupload\b/i],
-    requiredFields: [
-      { key: 'content', label: 'What to post or share', type: 'text', optional: false }
-    ],
-    confirmPrompt: 'Post or publish content'
-  }
-];
+// ============================================================================
+// DOMAIN KNOWLEDGE: Common site patterns used for step generation
+// ============================================================================
+const KNOWN_SITE_DOMAINS = {
+  github: 'https://github.com',
+  'my github': 'https://github.com',
+  linkedin: 'https://www.linkedin.com',
+  youtube: 'https://www.youtube.com',
+  google: 'https://www.google.com',
+  gmail: 'https://mail.google.com',
+  spotify: 'https://open.spotify.com',
+  instagram: 'https://www.instagram.com',
+  twitter: 'https://www.twitter.com',
+  reddit: 'https://www.reddit.com',
+  chatgpt: 'https://chat.openai.com',
+  canva: 'https://www.canva.com',
+  figma: 'https://www.figma.com',
+  notion: 'https://www.notion.so',
+  amazon: 'https://www.amazon.in',
+  flipkart: 'https://www.flipkart.com',
+  netflix: 'https://www.netflix.com',
+  udemy: 'https://www.udemy.com',
+  kaggle: 'https://www.kaggle.com',
+};
 
-/**
- * Detect the high-level intent from a user command
- */
-function classifyIntent(query) {
-  for (const intent of UNIVERSAL_INTENTS) {
-    if (intent.patterns.some(p => p.test(query))) {
-      return intent;
-    }
-  }
-  return null;
+// ============================================================================
+// STEP BUILDER UTILITIES
+// ============================================================================
+function stepNavigate(url, label) {
+  return { type: 'navigate', url, label: label || `Navigate to ${url}`, status: 'pending' };
+}
+function stepClick(target, label) {
+  return { type: 'click', target, label: label || `Click "${target}"`, status: 'pending' };
+}
+function stepType(field, value, label) {
+  return { type: 'type', field, value, label: label || `Type "${value}" into "${field}"`, status: 'pending' };
+}
+function stepSelect(field, value, label) {
+  return { type: 'select', field, value, label: label || `Select "${value}" for "${field}"`, status: 'pending' };
 }
 
-/**
- * For FILL_FORM intent: dynamically extract field names from the page DOM
- */
-/**
- * Dynamically extract interactive input/textarea/select fields directly from live page DOM
- */
-function extractFormFieldsFromDOM(elements) {
-  const isInputEl = (el) => el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select';
-  const inputEls = elements.filter(isInputEl).filter(el =>
-    el.type !== 'submit' && el.type !== 'button' && el.type !== 'checkbox' && el.type !== 'hidden'
-  );
+// ============================================================================
+// GOAL DECOMPOSER
+// Parses a full natural language command into an ordered StepQueue[].
+// Handles cross-page, multi-site, multi-action compound sentences.
+// ============================================================================
+function decomposeGoalIntoSteps(query, currentUrl) {
+  const q = query.toLowerCase().trim();
+  const steps = [];
 
-  return inputEls.map(el => {
-    const rawLabel = el.text || el.aria_label || el.placeholder || el.name || el.id || `Field #${el.tag_id}`;
-    const cleanLabel = rawLabel.replace(/[*:]/g, '').trim();
-    const key = (el.name || el.id || cleanLabel || `field_${el.tag_id}`)
-      .toLowerCase()
-      .replace(/\[|\]/g, '_')
-      .replace(/\s+/g, '_')
-      .replace(/[^a-z0-9_]/g, '');
+  // ── PHONETIC CORRECTION ────────────────────────────────────────────────────
+  const PHONETIC = [
+    [/\bcontinue\s+has\b/gi, 'continue as'],
+    [/\bguitar\b/gi, 'github'], [/\bget hub\b/gi, 'github'], [/\bgit hub\b/gi, 'github'],
+    [/\byou\s*tube\b/gi, 'youtube'], [/\blinked\s+in\b/gi, 'linkedin'],
+    [/\binsta\s*gram\b/gi, 'instagram'], [/\bchat\s+g\s*p\s*t\b/gi, 'chatgpt'],
+  ];
+  let cleanQ = q;
+  for (const [p, r] of PHONETIC) cleanQ = cleanQ.replace(p, r);
 
-    return {
-      key: key || `field_${el.tag_id}`,
-      label: cleanLabel || `Field #${el.tag_id}`,
-      type: el.type === 'password' ? 'password' : (el.type || 'text'),
-      tag_id: el.tag_id,
-      optional: el.placeholder?.toLowerCase().includes('optional') || el.text?.toLowerCase().includes('optional') || false
-    };
-  });
-}
-
-/**
- * Extract one-click SSO / Social Login / Quick Action buttons from live DOM
- * (e.g. "Continue with Google", "Continue with Apple", "Send OTP", "Log In with Phone")
- */
-function extractQuickActionButtonsFromDOM(elements) {
-  const quickActions = [];
-  const ssoKeywords = ['google', 'apple', 'facebook', 'github', 'microsoft', 'phone', 'otp', 'passkey', 'qr code', 'magic link'];
-
-  for (const el of elements) {
-    if (el.tag === 'button' || el.role === 'button' || el.tag === 'a' || el.role === 'link') {
-      const text = (el.text || el.aria_label || '').toLowerCase();
-      for (const kw of ssoKeywords) {
-        if (text.includes(kw) && (text.includes('continue') || text.includes('sign') || text.includes('log') || text.includes('with') || text.includes('use') || text.includes('send'))) {
-          quickActions.push({
-            label: el.text?.trim() || `Continue with ${kw.charAt(0).toUpperCase() + kw.slice(1)}`,
-            tag_id: el.tag_id,
-            action: 'click'
-          });
-          break;
-        }
-      }
-    }
-  }
-  return quickActions.slice(0, 3);
-}
-
-/**
- * Build a site-adaptive clarification request to send to popup.
- * Always prioritizes live DOM fields if present on the active webpage.
- */
-function buildClarificationRequest(intent, query, domFields = [], quickActions = [], siteTitle = '') {
-  // Use live DOM fields if available; otherwise use intent's template
-  const fields = (domFields && domFields.length > 0) ? domFields : (intent.requiredFields || []);
-
-  // Pre-extract values already mentioned in the user's voice/text command
-  const preExtracted = {};
-  fields.forEach(field => {
-    const patterns = [
-      new RegExp(`(?:${field.key.replace(/_/g, ' ')}|${field.label.toLowerCase()})\\s*[:=]?\\s*["']?([\\w@.+\\-]+)["']?`, 'i'),
-      new RegExp(`\\b(${field.label.toLowerCase().split(' ').join('|')})\\s+(\\S+)`, 'i')
-    ];
-    for (const p of patterns) {
-      const m = query.match(p);
-      if (m) { preExtracted[field.key] = m[1] || m[2]; break; }
-    }
-  });
-
-  const missing = fields.filter(f => !f.optional && !preExtracted[f.key]);
-  const optional = fields.filter(f => f.optional && !preExtracted[f.key]);
-
-  let cleanSiteName = siteTitle ? siteTitle.split(/[-–|]/)[0].trim() : '';
-  let customPrompt = cleanSiteName ? `${cleanSiteName} — ${intent.confirmPrompt}` : intent.confirmPrompt;
-
-  return {
-    intent: intent.id,
-    intentLabel: customPrompt,
-    fields: fields.map(f => ({
-      ...f,
-      prefilled: preExtracted[f.key] || f.default || ''
-    })),
-    quickActions: quickActions || [],
-    preExtracted,
-    hasMissingRequired: missing.length > 0,
-    missingRequired: missing,
-    optionalFields: optional
+  // ── HELPER: extract repo name from sentence ───────────────────────────────
+  const extractRepoName = (s) => {
+    const m = s.match(/(?:name\s+it|named|name|call\s+it|called|repo\s+name|repository\s+name)\s+([a-zA-Z0-9_\- ]+?)(?:\s+and|\s+make|\s+set|\s+as|\s+with|$)/i);
+    return m ? m[1].trim() : null;
   };
+  const extractVisibility = (s) => {
+    if (/\bprivate\b/i.test(s)) return 'private';
+    if (/\bpublic\b/i.test(s)) return 'public';
+    return null;
+  };
+
+  // ── CLAUSES: split sentence into navigable sub-goals ──────────────────────
+  const clauses = cleanQ.split(/\s+and\s+(?:then\s+)?(?=(?:open|go\s+to|create|make|set|turn|select|choose|click|type|enter|name|send|search|find|navigate|go\s+back|scroll|sign|log))/i);
+
+  for (const clause of clauses) {
+    const c = clause.trim();
+    if (!c) continue;
+
+    // 1. OPEN / NAVIGATE a website
+    const navMatch = c.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+(.+?)(?:\s+website)?$/i)
+                  || c.match(/^(?:open|go\s+to)\s+my\s+(.+?)(?:\s+website)?$/i);
+    if (navMatch) {
+      const siteName = navMatch[1].trim().toLowerCase().replace(/\s+website$/, '').replace(/\bmy\s+/, '');
+      const known = KNOWN_SITE_DOMAINS[siteName];
+      if (known) {
+        steps.push(stepNavigate(known, `Open ${siteName}`));
+      } else {
+        const url = siteName.includes('.') ? `https://${siteName}` : `https://www.${siteName}.com`;
+        steps.push(stepNavigate(url, `Open ${siteName}`));
+      }
+      continue;
+    }
+
+    // 2. CREATE REPO (GitHub)
+    const repoMatch = c.match(/^create\s+(?:a\s+)?(?:new\s+)?(?:repo|repository)\b(.*)$/i);
+    if (repoMatch) {
+      const rest = repoMatch[1] || '';
+      const repoName = extractRepoName(rest) || extractRepoName(cleanQ);
+      const visibility = extractVisibility(rest) || extractVisibility(cleanQ);
+      const shouldCreate = /\b(?:and\s+)?(?:just\s+)?create\b/i.test(cleanQ);
+
+      // Navigate to github.com/new if not already there
+      if (!currentUrl?.includes('github.com/new')) {
+        if (!currentUrl?.includes('github.com')) {
+          steps.push(stepNavigate('https://github.com', 'Open GitHub'));
+        }
+        steps.push(stepNavigate('https://github.com/new', 'Go to New Repository page'));
+      }
+
+      if (repoName) {
+        steps.push(stepType('repository name', repoName, `Set repo name to "${repoName}"`));
+      }
+      if (visibility) {
+        steps.push(stepSelect('visibility', visibility, `Set visibility to ${visibility}`));
+      }
+      if (shouldCreate || repoName) {
+        steps.push(stepClick('Create repository', 'Submit — Create repository'));
+      }
+      continue;
+    }
+
+    // 3. MAKE / SET VISIBILITY (private/public)
+    const visMatch = c.match(/^(?:make\s+(?:it|the\s+repo|repository)|set\s+(?:it\s+)?to|change\s+to)\s+(private|public)$/i);
+    if (visMatch) {
+      steps.push(stepSelect('visibility', visMatch[1].toLowerCase(), `Set repository to ${visMatch[1]}`));
+      continue;
+    }
+
+    // 4. JUST CREATE / SUBMIT
+    if (/^(?:just\s+)?(?:create\s+(?:this\s+)?(?:repo|repository)|submit|create\s+it|hit\s+create)$/.test(c)) {
+      steps.push(stepClick('Create repository', 'Click Create repository'));
+      continue;
+    }
+
+    // 5. NAME IT / TITLE
+    const nameMatch = c.match(/^(?:name\s+it|name\s+the\s+repo|call\s+it|title\s+it)\s+(.+)$/i);
+    if (nameMatch) {
+      steps.push(stepType('repository name', nameMatch[1].trim(), `Set name to "${nameMatch[1].trim()}"`));
+      continue;
+    }
+
+    // 6. SIGN IN / LOGIN
+    if (/\b(?:sign\s*in|log\s*in|login)\b/.test(c)) {
+      steps.push(stepClick('Sign in', 'Click Sign In'));
+      continue;
+    }
+
+    // 7. CLICK anything generic
+    const clickMatch = c.match(/^(?:click|press|tap|hit)\s+(.+)$/i);
+    if (clickMatch) {
+      steps.push(stepClick(clickMatch[1].trim(), `Click "${clickMatch[1].trim()}"`));
+      continue;
+    }
+
+    // 8. SCROLL
+    if (/^scroll\s+(down|up|top|bottom)/.test(c)) {
+      steps.push({ type: 'scroll', direction: /down|bottom/.test(c) ? 'down' : 'up', label: `Scroll ${c}`, status: 'pending' });
+      continue;
+    }
+
+    // 9. TYPE / ENTER something
+    const typeMatch = c.match(/^(?:type|enter|write|fill)\s+(.+?)(?:\s+in(?:to)?\s+(.+))?$/i);
+    if (typeMatch) {
+      const val = typeMatch[1].trim();
+      const field = typeMatch[2]?.trim() || 'input';
+      steps.push(stepType(field, val));
+      continue;
+    }
+
+    // 10. SEARCH FOR
+    const searchMatch = c.match(/^(?:search(?:\s+for)?|find|look\s+for)\s+(.+)$/i);
+    if (searchMatch) {
+      const q = searchMatch[1].trim();
+      steps.push(stepType('search', q, `Search for "${q}"`));
+      steps.push(stepClick('Search submit', 'Submit search'));
+      continue;
+    }
+  }
+
+  // De-duplicate consecutive identical navigate steps
+  const deduped = [];
+  for (let i = 0; i < steps.length; i++) {
+    if (i > 0 && steps[i].type === 'navigate' && deduped[deduped.length - 1].type === 'navigate' &&
+        steps[i].url === deduped[deduped.length - 1].url) continue;
+    deduped.push({ ...steps[i], id: i });
+  }
+
+  return deduped;
 }
 
-/**
- * Execute a collected task with all fields filled
- */
-async function executeTaskWorkflow(task) {
-  const { intent, fields, activeTab } = task;
-  broadcastStatus('thinking', `Executing: ${intent.confirmPrompt}...`);
+// ============================================================================
+// STEP QUEUE EXECUTOR
+// Runs the StepQueue one step at a time, with DOM-aware action dispatch
+// and automatic resume after page navigations.
+// ============================================================================
+async function runStepQueue(tabId) {
+  if (!activeTask || activeTask.status === 'done') return;
 
-  // If the workflow requires navigation first, navigate then queue remaining steps
-  if (intent.navigationUrl && !activeTab.url.includes(new URL(intent.navigationUrl).hostname + new URL(intent.navigationUrl).pathname.slice(0, 8))) {
-    // Store pending steps to execute after navigation
-    activeTask.pendingPostNavSteps = buildWorkflowSteps(task);
-    activeTask.status = 'navigating';
-
-    chrome.tabs.update(activeTab.id, { url: intent.navigationUrl });
-    broadcastStatus('thinking', `Navigating to ${intent.navigationUrl}...`);
+  const pendingSteps = activeTask.steps.filter(s => s.status === 'pending');
+  if (pendingSteps.length === 0) {
+    activeTask.status = 'done';
+    broadcastStatus('online', `✓ Goal completed: ${activeTask.goal.slice(0, 60)}`);
+    broadcastStepProgress();
     return;
   }
 
-  // Execute all steps directly on current page
-  const steps = buildWorkflowSteps(task);
-  broadcastStatus('thinking', `Running ${steps.length} steps...`);
+  const step = pendingSteps[0];
+  console.log('[SQ] Executing step:', step);
+  broadcastStatus('acting', `${step.label}...`);
 
-  const plan = {
-    id: `workflow-${Date.now()}`,
-    confidence: 0.98,
-    source: 'Autonomous-Workflow',
-    reasoning: `Executing ${intent.confirmPrompt} with ${steps.length} steps`,
-    actions: steps
-  };
-
-  chrome.tabs.sendMessage(activeTab.id, {
-    type: 'execute_actions',
-    payload: plan
-  }).catch(() => {});
-
-  chrome.runtime.sendMessage({
-    type: 'action_plan',
-    payload: plan
-  }).catch(() => {});
-
-  activeTask.status = 'executing';
-  activeTask.currentPlan = plan;
-}
-
-/**
- * Build ordered action steps from collected field data
- */
-function buildWorkflowSteps(task) {
-  const steps = [];
-  const { fields, elements } = task;
-
-  // Type into all form fields in order
-  fields.forEach((field, idx) => {
-    if (!field.value) return;
-    const isInputEl = (el) => el.tag === 'input' || el.tag === 'textarea' || el.tag === 'select';
-
-    // Find matching element in DOM
-    const el = (elements || []).find(e => {
-      if (!isInputEl(e)) return false;
-      const lbl = (e.text || e.aria_label || e.placeholder || e.name || '').toLowerCase();
-      return lbl.includes(field.key.replace(/_/g, ' ')) ||
-             lbl.includes(field.label.toLowerCase()) ||
-             field.label.toLowerCase().split(' ').some(w => w.length > 2 && lbl.includes(w));
-    });
-
-    if (el || field.tag_id) {
-      steps.push({
-        step: steps.length,
-        tag_id: field.tag_id || (el ? el.tag_id : 0),
-        action: 'type',
-        value: field.value,
-        description: `Fill "${field.label}" with "${field.value}"`
-      });
+  // ── NAVIGATE step ──────────────────────────────────────────────────────────
+  if (step.type === 'navigate') {
+    step.status = 'running';
+    broadcastStepProgress();
+    activeTask.status = 'navigating';
+    try {
+      await chrome.tabs.update(tabId, { url: step.url });
+      step.status = 'done';
+      // Execution resumes in tabs.onUpdated
+    } catch (err) {
+      step.status = 'failed';
+      broadcastStatus('error', `Navigation failed: ${err.message}`);
     }
-  });
-
-  // Find and click submit button
-  const submitEl = (task.elements || []).find(el => {
-    const t = (el.text || '').toLowerCase();
-    return (el.tag === 'button' || el.role === 'button') &&
-           (t.includes('submit') || t.includes('create') || t.includes('register') ||
-            t.includes('sign up') || t.includes('login') || t.includes('send') ||
-            t.includes('apply') || t.includes('continue') || t.includes('next') ||
-            t.includes('checkout') || t.includes('place order') || t.includes('book') ||
-            t.includes('post') || t.includes('publish') || t.includes('save'));
-  });
-
-  if (submitEl) {
-    steps.push({
-      step: steps.length,
-      tag_id: submitEl.tag_id,
-      action: 'click',
-      description: `Click "${submitEl.text || 'Submit'}" to complete`
-    });
+    return;
   }
 
-  return steps;
+  // ── DOM-based steps: extract DOM first ────────────────────────────────────
+  let elements = [];
+  try {
+    const response = await chrome.tabs.sendMessage(tabId, { type: 'extract_dom', render_overlays: false });
+    elements = response?.payload?.elements || [];
+  } catch (e) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content.js'] });
+      await new Promise(r => setTimeout(r, 200));
+      const r2 = await chrome.tabs.sendMessage(tabId, { type: 'extract_dom', render_overlays: false });
+      elements = r2?.payload?.elements || [];
+    } catch (e2) {
+      console.warn('[SQ] DOM extraction failed:', e2);
+    }
+  }
+
+  // Build a mini action plan for this single step using existing DOM matching
+  const actions = resolveStepToActions(step, elements);
+
+  if (actions.length === 0) {
+    console.warn('[SQ] Could not resolve step to DOM element:', step);
+    step.status = 'skipped';
+    broadcastStepProgress();
+    // Continue to next step anyway
+    setTimeout(() => runStepQueue(tabId), 400);
+    return;
+  }
+
+  step.status = 'running';
+  broadcastStepProgress();
+
+  const plan = {
+    id: `sq-${Date.now()}`,
+    confidence: 0.98,
+    source: 'StepQueue-Executor',
+    reasoning: step.label,
+    actions
+  };
+
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'execute_actions', payload: plan });
+    step.status = 'done';
+    broadcastStepProgress();
+    broadcastStatus('acting', `✓ ${step.label}`);
+    // Advance to next step
+    await new Promise(r => setTimeout(r, 600));
+    runStepQueue(tabId);
+  } catch (err) {
+    step.status = 'failed';
+    broadcastStatus('error', `Step failed: ${err.message}`);
+  }
 }
 
-/**
- * Handle user's reply to a clarification dialog
- */
-async function handleClarificationReply(payload) {
+// ============================================================================
+// RESOLVE A STEP → DOM ACTIONS
+// Maps a logical step (type/click/select/scroll) to concrete tag_id actions
+// ============================================================================
+function resolveStepToActions(step, elements) {
+  const actions = [];
+
+  const isInputEl = (el) =>
+    el.tag === 'input' || el.tag === 'textarea' || el.role === 'textbox' || el.role === 'searchbox';
+  const getLabel = (el) =>
+    (el.text || el.aria_label || el.placeholder || el.name || el.id || '').toLowerCase();
+
+  if (step.type === 'type') {
+    const fieldWords = step.field.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+    const inputEls = elements.filter(isInputEl).filter(el => el.type !== 'radio' && el.type !== 'checkbox');
+    let bestEl = null, bestScore = 0;
+    for (const el of inputEls) {
+      const lbl = getLabel(el);
+      let score = fieldWords.reduce((s, w) => s + (lbl.includes(w) ? 40 : 0), 0);
+      if (lbl.includes(step.field.toLowerCase())) score += 60;
+      if (score > bestScore) { bestScore = score; bestEl = el; }
+    }
+    if (!bestEl && inputEls.length > 0) bestEl = inputEls[0];
+    if (bestEl) {
+      actions.push({ step: 0, tag_id: bestEl.tag_id, action: 'type', value: step.value, description: step.label });
+    }
+  }
+
+  if (step.type === 'select') {
+    // Look for radio/checkbox/button matching the value
+    const valWords = step.value.toLowerCase().split(/\s+/).filter(w => w.length > 1);
+    let bestEl = null, bestScore = 0;
+    for (const el of elements) {
+      const lbl = getLabel(el);
+      let score = valWords.reduce((s, w) => s + (lbl.includes(w) ? 40 : 0), 0);
+      if (el.type === 'radio' || el.role === 'radio') score += 20;
+      if (score > bestScore) { bestScore = score; bestEl = el; }
+    }
+    if (bestEl && bestScore >= 20) {
+      actions.push({ step: 0, tag_id: bestEl.tag_id, action: 'click', description: step.label });
+    }
+  }
+
+  if (step.type === 'click') {
+    const targetWords = step.target.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const clickableEls = elements.filter(el => !isInputEl(el) || el.type === 'radio');
+    let bestEl = null, bestScore = 0;
+    for (const el of clickableEls) {
+      const lbl = getLabel(el);
+      let score = targetWords.reduce((s, w) => s + (lbl.includes(w) ? 35 : 0), 0);
+      if (lbl.includes(step.target.toLowerCase())) score += 60;
+      if (el.tag === 'button' || el.role === 'button' || el.type === 'submit') score += 15;
+      if (score > bestScore) { bestScore = score; bestEl = el; }
+    }
+    if (bestEl && bestScore >= 20) {
+      actions.push({ step: 0, tag_id: bestEl.tag_id, action: 'click', description: step.label });
+    }
+  }
+
+  if (step.type === 'scroll') {
+    actions.push({ step: 0, tag_id: 0, action: 'scroll', value: step.direction || 'down', description: step.label });
+  }
+
+  return actions;
+}
+
+// ============================================================================
+// BROADCAST STEP PROGRESS TO POPUP
+// ============================================================================
+function broadcastStepProgress() {
   if (!activeTask) return;
-
-  // Merge user-provided values into task fields
-  activeTask.fields = activeTask.fields.map(f => ({
-    ...f,
-    value: payload.values[f.key] !== undefined ? payload.values[f.key] : f.prefilled || ''
-  }));
-
-  // Get current tab fresh
-  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  activeTask.activeTab = tabs?.[0] || activeTask.activeTab;
-  activeTask.status = 'ready';
-
-  await executeTaskWorkflow(activeTask);
+  chrome.runtime.sendMessage({
+    type: 'step_progress',
+    payload: {
+      goal: activeTask.goal,
+      steps: activeTask.steps.map(s => ({ id: s.id, label: s.label, status: s.status })),
+      currentStep: activeTask.steps.findIndex(s => s.status === 'pending' || s.status === 'running')
+    }
+  }).catch(() => {});
 }
 
-// Tab navigation relay: when a tab finishes loading, check if we have pending steps
+// ============================================================================
+// TAB NAVIGATION RELAY: when page finishes loading, resume StepQueue
+// ============================================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== 'complete') return;
   if (!activeTask || activeTask.status !== 'navigating') return;
-  if (!activeTask.pendingPostNavSteps?.length) return;
 
-  // Small delay for page JS to initialize
+  // Wait for page JS to initialize then resume
   setTimeout(async () => {
     try {
-      // Re-extract DOM from the new page
-      const response = await chrome.tabs.sendMessage(tabId, {
-        type: 'extract_dom',
-        render_overlays: false
-      });
-      const elements = response?.payload?.elements || [];
-      activeTask.elements = elements;
-      activeTask.activeTab = tab;
-      activeTask.status = 'ready';
-      await executeTaskWorkflow(activeTask);
+      activeTask.status = 'running';
+      console.log('[SQ] Page loaded, resuming step queue on tab', tabId);
+      await runStepQueue(tabId);
     } catch (e) {
-      console.warn('[Background] Post-navigation DOM extraction failed:', e);
-      // Still try to execute with old elements list
-      activeTask.activeTab = tab;
-      activeTask.status = 'ready';
-      await executeTaskWorkflow(activeTask);
+      console.warn('[SQ] Resume after navigation failed:', e.message);
     }
-  }, 800);
+  }, 1000);
 });
 
 // ============================================================================
+// LEGACY: handleClarificationReply kept for compatibility
 // ============================================================================
-// Universal Compound Flow Decomposition Engine
-// Breaks natural dictated multi-step sentences into chained actions in one flow.
-// Example: "enter Coca-Cola as repository name make public to private and create"
-//  -> Step 0: type "Coca-Cola" into Repository Name (#53)
-//  -> Step 1: click "Private" (#57)
-//  -> Step 2: click "Create repository" (#62)
-// ============================================================================
+async function handleClarificationReply(payload) {
+  if (!activeTask?.steps) return;
+  // If there's a pending step queue, just resume it
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tabId = tabs?.[0]?.id;
+  if (tabId) runStepQueue(tabId);
+}
+
+// Legacy UNIVERSAL_INTENTS kept for classifyIntent compatibility
+const UNIVERSAL_INTENTS = [
+  { id: 'LOGIN', patterns: [/\blog\s*in\b/i, /\bsign\s*in\b/i, /\blogin\b/i], requiredFields: [], confirmPrompt: 'Log in' },
+  { id: 'REGISTER', patterns: [/\bsign\s*up\b/i, /\bcreate\s*account\b/i], requiredFields: [], confirmPrompt: 'Register' },
+];
+function classifyIntent(query) { return null; } // Disabled — StepQueue handles all flows
+
+function extractFormFieldsFromDOM(elements) { return []; }
+function extractQuickActionButtonsFromDOM(elements) { return []; }
+function buildClarificationRequest() { return { fields: [], hasMissingRequired: false }; }
+function executeTaskWorkflow() {}
+function buildWorkflowSteps() { return []; }
+
 function parseCompoundWorkflow(query, elements) {
   if (!query || elements.length === 0) return null;
 
