@@ -458,6 +458,11 @@ function stepSelect(field, value, label) {
 // Parses a full natural language command into an ordered StepQueue[].
 // Handles cross-page, multi-site, multi-action compound sentences.
 // ============================================================================
+// ============================================================================
+// GOAL DECOMPOSER
+// Parses any natural language command into an ordered StepQueue[].
+// Handles cross-page, multi-site, multi-action compound sentences autonomously.
+// ============================================================================
 function decomposeGoalIntoSteps(query, currentUrl) {
   let q = query.toLowerCase().trim();
   const steps = [];
@@ -468,18 +473,17 @@ function decomposeGoalIntoSteps(query, currentUrl) {
     [/\bguitar\b/gi, 'github'], [/\bget hub\b/gi, 'github'], [/\bgit hub\b/gi, 'github'],
     [/\byou\s*tube\b/gi, 'youtube'], [/\blinked\s+in\b/gi, 'linkedin'],
     [/\binsta\s*gram\b/gi, 'instagram'], [/\bchat\s+g\s*p\s*t\b/gi, 'chatgpt'],
+    [/\blead\s*code\b/gi, 'leetcode'], [/\bleet\s*code\b/gi, 'leetcode'],
   ];
   for (const [p, r] of PHONETIC) q = q.replace(p, r);
 
-  // ── 1. HIGH-LEVEL GOAL: GitHub Repository Creation Workflow ─────────────────
+  // ── 1. GITHUB REPO CREATION WORKFLOW ──────────────────────────────────────
   const isGithubRepoGoal = /\b(?:create|new|make)\s+(?:a\s+)?(?:new\s+)?(?:repo|repository)\b/i.test(q) ||
                            (/\bgithub\b/i.test(q) && /\b(?:repo|repository)\b/i.test(q));
 
   if (isGithubRepoGoal) {
-    // Navigate straight to new repo URL
     steps.push({ type: 'navigate', url: 'https://github.com/new', label: 'Go to GitHub New Repository page' });
 
-    // Extract repo name
     const nameMatch = q.match(/(?:name\s+it|named|name|call\s+it|called|repo\s+name|repository\s+name)\s+([a-zA-Z0-9_\-\.]+)/i)
                    || q.match(/(?:create\s+(?:a\s+)?(?:new\s+)?(?:repo|repository)\s+(?:called\s+|named\s+)?)([a-zA-Z0-9_\-\.]+)/i);
     let repoName = nameMatch ? nameMatch[1].trim() : null;
@@ -490,92 +494,97 @@ function decomposeGoalIntoSteps(query, currentUrl) {
       steps.push({ type: 'type', field: 'repository name', value: repoName, label: `Set repo name to "${repoName}"` });
     }
 
-    // Extract visibility
     if (/\bprivate\b/i.test(q)) {
       steps.push({ type: 'select', field: 'visibility', value: 'private', label: 'Set repository to private' });
     } else if (/\bpublic\b/i.test(q)) {
       steps.push({ type: 'select', field: 'visibility', value: 'public', label: 'Set repository to public' });
     }
 
-    // Always finish with Create repository button click
     steps.push({ type: 'click', target: 'Create repository', label: 'Submit — Create repository' });
+    return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+  }
+
+  // ── 2. EXTRACT SITE NAVIGATION FIRST IF PRESENT ───────────────────────────
+  let siteUrl = null;
+  let remainingQuery = q;
+
+  const siteMatch = q.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+([a-zA-Z0-9_\-\.]+)(?:\s+(?:website|app|page))?\b\s*(.*)$/i);
+  if (siteMatch) {
+    const rawSite = siteMatch[1].toLowerCase();
+    remainingQuery = siteMatch[2]?.trim() || '';
+
+    if (KNOWN_SITE_DOMAINS[rawSite]) {
+      siteUrl = KNOWN_SITE_DOMAINS[rawSite];
+    } else if (rawSite.includes('.')) {
+      siteUrl = `https://${rawSite}`;
+    } else {
+      siteUrl = `https://${rawSite}.com`;
+    }
+    steps.push({ type: 'navigate', url: siteUrl, label: `Open ${rawSite}` });
+  }
+
+  // ── 3. UNIVERSAL LOGIN / SIGN IN WORKFLOW ON ANY SITE ──────────────────────
+  const isLoginGoal = /\b(?:log\s*in|sign\s*in|login|signin|enter\s*(?:my\s*)?account)\b/i.test(remainingQuery || q);
+  if (isLoginGoal) {
+    // Extract username/email identifier from speech
+    const userMatch = (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)$/i)
+                   || (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)\b/i);
+    let username = userMatch ? userMatch[1].trim() : null;
+    const reservedUsers = ['login', 'signin', 'my', 'first', 'account', 'email', 'user', 'the', 'a', 'it', 'password'];
+    if (reservedUsers.includes(username?.toLowerCase())) username = null;
+
+    // Step: Click Sign In / Login button
+    steps.push({ type: 'click', target: 'Sign in Log in Login', label: 'Click Sign in / Login' });
+
+    // Step: Type username/email if mentioned
+    if (username) {
+      steps.push({ type: 'type', field: 'username email login identifier', value: username, label: `Enter username/email "${username}"` });
+    }
 
     return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
   }
 
-  // ── 2. HIGH-LEVEL GOAL: YouTube Search ──────────────────────────────────────
-  const isYoutubeSearch = /\byoutube\b/i.test(q) && /\b(?:search|play|find|look\s+for)\b/i.test(q);
-  if (isYoutubeSearch) {
-    const searchMatch = q.match(/(?:search\s+for|search|play|find|look\s+for)\s+(.+)$/i);
-    const queryTerm = searchMatch ? searchMatch[1].replace(/\s+(?:on|in)\s+youtube/i, '').trim() : '';
+  // ── 4. UNIVERSAL SEARCH WORKFLOW ON ANY SITE ───────────────────────────────
+  const isSearchGoal = /\b(?:search(?:\s+for)?|find|look\s+for|query)\b/i.test(remainingQuery || q);
+  if (isSearchGoal) {
+    const searchMatch = (remainingQuery || q).match(/(?:search(?:\s+for)?|find|look\s+for|query)\s+(.+)$/i);
+    let queryTerm = searchMatch ? searchMatch[1].trim() : '';
+    queryTerm = queryTerm.replace(/\s+(?:on|in)\s+[a-zA-Z0-9_\-\.]+$/i, '').trim();
+
     if (queryTerm) {
-      steps.push({ type: 'navigate', url: `https://www.youtube.com/results?search_query=${encodeURIComponent(queryTerm)}`, label: `Search YouTube for "${queryTerm}"` });
+      steps.push({ type: 'type', field: 'search query input', value: queryTerm, label: `Search for "${queryTerm}"` });
+      steps.push({ type: 'click', target: 'Search submit button', label: 'Submit search' });
       return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
     }
   }
 
-  // ── 3. GENERIC SITE OPENING WITH CHAINED ACTIONS ───────────────────────────
-  for (const siteName of Object.keys(KNOWN_SITE_DOMAINS)) {
-    const siteRegex = new RegExp(`^(?:open|go\\s+to|navigate\\s+to|visit|launch)\\s+(?:my\\s+)?${siteName}\\b(.*)$`, 'i');
-    const m = q.match(siteRegex);
-    if (m) {
-      steps.push({ type: 'navigate', url: KNOWN_SITE_DOMAINS[siteName], label: `Open ${siteName}` });
-      const rest = m[1].trim();
-      if (rest) {
-        const subSteps = decomposeGoalIntoSteps(rest, KNOWN_SITE_DOMAINS[siteName]);
-        steps.push(...subSteps);
+  // ── 5. GENERAL CLAUSE-BY-CLAUSE DECOMPOSITION ─────────────────────────────
+  if (remainingQuery) {
+    const clauses = remainingQuery.split(/\s+(?:and\s+then|then|after\s+that|and\s+also|also|and|,|;)\s+|\s+(?=(?:make|set|change|switch|turn|select|choose|click|press|tap|submit|create|save|fill|type|enter)\s+)/i);
+    for (const c of clauses) {
+      const clause = c.trim();
+      if (!clause) continue;
+
+      const clickM = clause.match(/^(?:click|press|tap|hit|submit)\s+(.+)$/i);
+      if (clickM) {
+        steps.push({ type: 'click', target: clickM[1].trim(), label: `Click "${clickM[1].trim()}"` });
+        continue;
       }
-      return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
-    }
-  }
 
-  // ── 4. CLAUSE-BASED SPLITTING FALLBACK ────────────────────────────────────
-  const clauses = q.split(/\s+(?:and\s+then|then|after\s+that|and\s+also|also|and|,|;)\s+|\s+(?=(?:make|set|change|switch|turn|select|choose|click|press|tap|submit|create|save|fill|type|enter|name\s+it|named)\s+)/i);
-
-  for (const clause of clauses) {
-    const c = clause.trim();
-    if (!c) continue;
-
-    const navMatch = c.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+(.+?)(?:\s+website)?$/i);
-    if (navMatch) {
-      const targetSite = navMatch[1].trim().replace(/\bmy\s+/, '');
-      const known = KNOWN_SITE_DOMAINS[targetSite];
-      if (known) {
-        steps.push(stepNavigate(known, `Open ${targetSite}`));
-      } else {
-        const url = targetSite.includes('.') ? `https://${targetSite}` : `https://www.${targetSite}.com`;
-        steps.push(stepNavigate(url, `Open ${targetSite}`));
+      const typeM = clause.match(/^(?:type|enter|write|fill)\s+(.+?)(?:\s+in(?:to)?\s+(.+))?$/i);
+      if (typeM) {
+        steps.push({ type: 'type', field: typeM[2]?.trim() || 'input', value: typeM[1].trim(), label: `Type "${typeM[1].trim()}"` });
+        continue;
       }
-      continue;
-    }
 
-    const clickMatch = c.match(/^(?:click|press|tap|hit|submit)\s+(.+)$/i);
-    if (clickMatch) {
-      steps.push(stepClick(clickMatch[1].trim(), `Click "${clickMatch[1].trim()}"`));
-      continue;
-    }
-
-    const typeMatch = c.match(/^(?:type|enter|write|fill)\s+(.+?)(?:\s+in(?:to)?\s+(.+))?$/i);
-    if (typeMatch) {
-      steps.push(stepType(typeMatch[2]?.trim() || 'input', typeMatch[1].trim()));
-      continue;
-    }
-
-    if (/^scroll\s+(down|up|top|bottom)/.test(c)) {
-      steps.push({ type: 'scroll', direction: /down|bottom/.test(c) ? 'down' : 'up', label: `Scroll ${c}`, status: 'pending' });
-      continue;
+      if (/^scroll\s+(down|up|top|bottom)/i.test(clause)) {
+        steps.push({ type: 'scroll', direction: /down|bottom/i.test(clause) ? 'down' : 'up', label: `Scroll ${clause}` });
+        continue;
+      }
     }
   }
 
-  // De-duplicate consecutive identical navigate steps
-  const deduped = [];
-  for (let i = 0; i < steps.length; i++) {
-    if (i > 0 && steps[i].type === 'navigate' && deduped[deduped.length - 1].type === 'navigate' &&
-        steps[i].url === deduped[deduped.length - 1].url) continue;
-    deduped.push({ ...steps[i], id: i });
-  }
-
-  return deduped;
+  return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
 }
 
 // ============================================================================
@@ -704,12 +713,12 @@ function resolveStepToActions(step, elements) {
       const lbl = getLabel(el);
       let score = valWords.reduce((s, w) => s + (lbl.includes(w) ? 40 : 0), 0);
       if (el.type === 'radio' || el.role === 'radio') score += 30;
-      if (el.value?.toLowerCase() === step.value.toLowerCase()) score += 50;
-      if (el.id?.toLowerCase().includes(step.value.toLowerCase())) score += 40;
+      if (el.value?.toLowerCase() === step.value.toLowerCase()) score += 60;
+      if (el.id?.toLowerCase().includes(step.value.toLowerCase())) score += 50;
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
     if (bestEl && bestScore >= 20) {
-      actions.push({ step: 0, tag_id: bestEl.tag_id, action: 'click', description: step.label });
+      actions.push({ step: 0, tag_id: bestEl.tag_id, action: 'select', value: step.value, description: step.label });
     }
   }
 
@@ -735,6 +744,7 @@ function resolveStepToActions(step, elements) {
 
   return actions;
 }
+
 
 function broadcastStepProgress() {
   if (!activeTask) return;

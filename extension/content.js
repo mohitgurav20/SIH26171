@@ -384,6 +384,18 @@
       try { clickableParent.click(); } catch(e) {}
     }
 
+    if (clickableParent.type === 'radio' || clickableParent.type === 'checkbox') {
+      clickableParent.checked = true;
+      clickableParent.dispatchEvent(new Event('input', { bubbles: true }));
+      clickableParent.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const innerRadio = clickableParent.querySelector?.('input[type="radio"], input[type="checkbox"]');
+    if (innerRadio) {
+      innerRadio.checked = true;
+      innerRadio.dispatchEvent(new Event('input', { bubbles: true }));
+      innerRadio.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
     if (clickableParent.tagName === 'IFRAME') {
       try {
         clickableParent.focus();
@@ -447,7 +459,10 @@
   }
 
   async function simulateSelect(element, value) {
-    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!element) return;
+    try {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+    } catch(e) {}
     await sleep(150);
 
     if (element.tagName === 'SELECT') {
@@ -464,6 +479,20 @@
       }
       element.dispatchEvent(new Event('change', { bubbles: true }));
       element.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      // Radio or custom choice element (e.g. GitHub Private/Public radio option)
+      if (element.type === 'radio' || element.type === 'checkbox') {
+        element.checked = true;
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+        element.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      const radioInside = element.querySelector?.('input[type="radio"], input[type="checkbox"]');
+      if (radioInside) {
+        radioInside.checked = true;
+        radioInside.dispatchEvent(new Event('input', { bubbles: true }));
+        radioInside.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      await simulateClick(element);
     }
   }
 
