@@ -459,7 +459,7 @@ function stepSelect(field, value, label) {
 // Handles cross-page, multi-site, multi-action compound sentences.
 // ============================================================================
 function decomposeGoalIntoSteps(query, currentUrl) {
-  const q = query.toLowerCase().trim();
+  let q = query.toLowerCase().trim();
   const steps = [];
 
   // ── PHONETIC CORRECTION ────────────────────────────────────────────────────
@@ -469,124 +469,100 @@ function decomposeGoalIntoSteps(query, currentUrl) {
     [/\byou\s*tube\b/gi, 'youtube'], [/\blinked\s+in\b/gi, 'linkedin'],
     [/\binsta\s*gram\b/gi, 'instagram'], [/\bchat\s+g\s*p\s*t\b/gi, 'chatgpt'],
   ];
-  let cleanQ = q;
-  for (const [p, r] of PHONETIC) cleanQ = cleanQ.replace(p, r);
+  for (const [p, r] of PHONETIC) q = q.replace(p, r);
 
-  // ── HELPER: extract repo name from sentence ───────────────────────────────
-  const extractRepoName = (s) => {
-    const m = s.match(/(?:name\s+it|named|name|call\s+it|called|repo\s+name|repository\s+name)\s+([a-zA-Z0-9_\- ]+?)(?:\s+and|\s+make|\s+set|\s+as|\s+with|$)/i);
-    return m ? m[1].trim() : null;
-  };
-  const extractVisibility = (s) => {
-    if (/\bprivate\b/i.test(s)) return 'private';
-    if (/\bpublic\b/i.test(s)) return 'public';
-    return null;
-  };
+  // ── 1. HIGH-LEVEL GOAL: GitHub Repository Creation Workflow ─────────────────
+  const isGithubRepoGoal = /\b(?:create|new|make)\s+(?:a\s+)?(?:new\s+)?(?:repo|repository)\b/i.test(q) ||
+                           (/\bgithub\b/i.test(q) && /\b(?:repo|repository)\b/i.test(q));
 
-  // ── CLAUSES: split sentence into navigable sub-goals ──────────────────────
-  const clauses = cleanQ.split(/\s+and\s+(?:then\s+)?(?=(?:open|go\s+to|create|make|set|turn|select|choose|click|type|enter|name|send|search|find|navigate|go\s+back|scroll|sign|log))/i);
+  if (isGithubRepoGoal) {
+    // Navigate straight to new repo URL
+    steps.push({ type: 'navigate', url: 'https://github.com/new', label: 'Go to GitHub New Repository page' });
+
+    // Extract repo name
+    const nameMatch = q.match(/(?:name\s+it|named|name|call\s+it|called|repo\s+name|repository\s+name)\s+([a-zA-Z0-9_\-\.]+)/i)
+                   || q.match(/(?:create\s+(?:a\s+)?(?:new\s+)?(?:repo|repository)\s+(?:called\s+|named\s+)?)([a-zA-Z0-9_\-\.]+)/i);
+    let repoName = nameMatch ? nameMatch[1].trim() : null;
+    const reservedWords = ['and', 'make', 'it', 'private', 'public', 'a', 'the', 'new', 'repo', 'repository', 'this'];
+    if (reservedWords.includes(repoName)) repoName = null;
+
+    if (repoName) {
+      steps.push({ type: 'type', field: 'repository name', value: repoName, label: `Set repo name to "${repoName}"` });
+    }
+
+    // Extract visibility
+    if (/\bprivate\b/i.test(q)) {
+      steps.push({ type: 'select', field: 'visibility', value: 'private', label: 'Set repository to private' });
+    } else if (/\bpublic\b/i.test(q)) {
+      steps.push({ type: 'select', field: 'visibility', value: 'public', label: 'Set repository to public' });
+    }
+
+    // Always finish with Create repository button click
+    steps.push({ type: 'click', target: 'Create repository', label: 'Submit — Create repository' });
+
+    return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+  }
+
+  // ── 2. HIGH-LEVEL GOAL: YouTube Search ──────────────────────────────────────
+  const isYoutubeSearch = /\byoutube\b/i.test(q) && /\b(?:search|play|find|look\s+for)\b/i.test(q);
+  if (isYoutubeSearch) {
+    const searchMatch = q.match(/(?:search\s+for|search|play|find|look\s+for)\s+(.+)$/i);
+    const queryTerm = searchMatch ? searchMatch[1].replace(/\s+(?:on|in)\s+youtube/i, '').trim() : '';
+    if (queryTerm) {
+      steps.push({ type: 'navigate', url: `https://www.youtube.com/results?search_query=${encodeURIComponent(queryTerm)}`, label: `Search YouTube for "${queryTerm}"` });
+      return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+    }
+  }
+
+  // ── 3. GENERIC SITE OPENING WITH CHAINED ACTIONS ───────────────────────────
+  for (const siteName of Object.keys(KNOWN_SITE_DOMAINS)) {
+    const siteRegex = new RegExp(`^(?:open|go\\s+to|navigate\\s+to|visit|launch)\\s+(?:my\\s+)?${siteName}\\b(.*)$`, 'i');
+    const m = q.match(siteRegex);
+    if (m) {
+      steps.push({ type: 'navigate', url: KNOWN_SITE_DOMAINS[siteName], label: `Open ${siteName}` });
+      const rest = m[1].trim();
+      if (rest) {
+        const subSteps = decomposeGoalIntoSteps(rest, KNOWN_SITE_DOMAINS[siteName]);
+        steps.push(...subSteps);
+      }
+      return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+    }
+  }
+
+  // ── 4. CLAUSE-BASED SPLITTING FALLBACK ────────────────────────────────────
+  const clauses = q.split(/\s+(?:and\s+then|then|after\s+that|and\s+also|also|and|,|;)\s+|\s+(?=(?:make|set|change|switch|turn|select|choose|click|press|tap|submit|create|save|fill|type|enter|name\s+it|named)\s+)/i);
 
   for (const clause of clauses) {
     const c = clause.trim();
     if (!c) continue;
 
-    // 1. OPEN / NAVIGATE a website
-    const navMatch = c.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+(.+?)(?:\s+website)?$/i)
-                  || c.match(/^(?:open|go\s+to)\s+my\s+(.+?)(?:\s+website)?$/i);
+    const navMatch = c.match(/^(?:open|go\s+to|navigate\s+to|visit|launch)\s+(.+?)(?:\s+website)?$/i);
     if (navMatch) {
-      const siteName = navMatch[1].trim().toLowerCase().replace(/\s+website$/, '').replace(/\bmy\s+/, '');
-      const known = KNOWN_SITE_DOMAINS[siteName];
+      const targetSite = navMatch[1].trim().replace(/\bmy\s+/, '');
+      const known = KNOWN_SITE_DOMAINS[targetSite];
       if (known) {
-        steps.push(stepNavigate(known, `Open ${siteName}`));
+        steps.push(stepNavigate(known, `Open ${targetSite}`));
       } else {
-        const url = siteName.includes('.') ? `https://${siteName}` : `https://www.${siteName}.com`;
-        steps.push(stepNavigate(url, `Open ${siteName}`));
+        const url = targetSite.includes('.') ? `https://${targetSite}` : `https://www.${targetSite}.com`;
+        steps.push(stepNavigate(url, `Open ${targetSite}`));
       }
       continue;
     }
 
-    // 2. CREATE REPO (GitHub)
-    const repoMatch = c.match(/^create\s+(?:a\s+)?(?:new\s+)?(?:repo|repository)\b(.*)$/i);
-    if (repoMatch) {
-      const rest = repoMatch[1] || '';
-      const repoName = extractRepoName(rest) || extractRepoName(cleanQ);
-      const visibility = extractVisibility(rest) || extractVisibility(cleanQ);
-      const shouldCreate = /\b(?:and\s+)?(?:just\s+)?create\b/i.test(cleanQ);
-
-      // Navigate to github.com/new if not already there
-      if (!currentUrl?.includes('github.com/new')) {
-        if (!currentUrl?.includes('github.com')) {
-          steps.push(stepNavigate('https://github.com', 'Open GitHub'));
-        }
-        steps.push(stepNavigate('https://github.com/new', 'Go to New Repository page'));
-      }
-
-      if (repoName) {
-        steps.push(stepType('repository name', repoName, `Set repo name to "${repoName}"`));
-      }
-      if (visibility) {
-        steps.push(stepSelect('visibility', visibility, `Set visibility to ${visibility}`));
-      }
-      if (shouldCreate || repoName) {
-        steps.push(stepClick('Create repository', 'Submit — Create repository'));
-      }
-      continue;
-    }
-
-    // 3. MAKE / SET VISIBILITY (private/public)
-    const visMatch = c.match(/^(?:make\s+(?:it|the\s+repo|repository)|set\s+(?:it\s+)?to|change\s+to)\s+(private|public)$/i);
-    if (visMatch) {
-      steps.push(stepSelect('visibility', visMatch[1].toLowerCase(), `Set repository to ${visMatch[1]}`));
-      continue;
-    }
-
-    // 4. JUST CREATE / SUBMIT
-    if (/^(?:just\s+)?(?:create\s+(?:this\s+)?(?:repo|repository)|submit|create\s+it|hit\s+create)$/.test(c)) {
-      steps.push(stepClick('Create repository', 'Click Create repository'));
-      continue;
-    }
-
-    // 5. NAME IT / TITLE
-    const nameMatch = c.match(/^(?:name\s+it|name\s+the\s+repo|call\s+it|title\s+it)\s+(.+)$/i);
-    if (nameMatch) {
-      steps.push(stepType('repository name', nameMatch[1].trim(), `Set name to "${nameMatch[1].trim()}"`));
-      continue;
-    }
-
-    // 6. SIGN IN / LOGIN
-    if (/\b(?:sign\s*in|log\s*in|login)\b/.test(c)) {
-      steps.push(stepClick('Sign in', 'Click Sign In'));
-      continue;
-    }
-
-    // 7. CLICK anything generic
-    const clickMatch = c.match(/^(?:click|press|tap|hit)\s+(.+)$/i);
+    const clickMatch = c.match(/^(?:click|press|tap|hit|submit)\s+(.+)$/i);
     if (clickMatch) {
       steps.push(stepClick(clickMatch[1].trim(), `Click "${clickMatch[1].trim()}"`));
       continue;
     }
 
-    // 8. SCROLL
-    if (/^scroll\s+(down|up|top|bottom)/.test(c)) {
-      steps.push({ type: 'scroll', direction: /down|bottom/.test(c) ? 'down' : 'up', label: `Scroll ${c}`, status: 'pending' });
-      continue;
-    }
-
-    // 9. TYPE / ENTER something
     const typeMatch = c.match(/^(?:type|enter|write|fill)\s+(.+?)(?:\s+in(?:to)?\s+(.+))?$/i);
     if (typeMatch) {
-      const val = typeMatch[1].trim();
-      const field = typeMatch[2]?.trim() || 'input';
-      steps.push(stepType(field, val));
+      steps.push(stepType(typeMatch[2]?.trim() || 'input', typeMatch[1].trim()));
       continue;
     }
 
-    // 10. SEARCH FOR
-    const searchMatch = c.match(/^(?:search(?:\s+for)?|find|look\s+for)\s+(.+)$/i);
-    if (searchMatch) {
-      const q = searchMatch[1].trim();
-      steps.push(stepType('search', q, `Search for "${q}"`));
-      steps.push(stepClick('Search submit', 'Submit search'));
+    if (/^scroll\s+(down|up|top|bottom)/.test(c)) {
+      steps.push({ type: 'scroll', direction: /down|bottom/.test(c) ? 'down' : 'up', label: `Scroll ${c}`, status: 'pending' });
       continue;
     }
   }
@@ -654,7 +630,7 @@ async function runStepQueue(tabId) {
     }
   }
 
-  // Build a mini action plan for this single step using existing DOM matching
+  // Build a mini action plan for this single step using DOM matching
   const actions = resolveStepToActions(step, elements);
 
   if (actions.length === 0) {
@@ -711,6 +687,7 @@ function resolveStepToActions(step, elements) {
       const lbl = getLabel(el);
       let score = fieldWords.reduce((s, w) => s + (lbl.includes(w) ? 40 : 0), 0);
       if (lbl.includes(step.field.toLowerCase())) score += 60;
+      if (el.name?.includes('repo') || el.id?.includes('repo') || el.placeholder?.includes('repo')) score += 50;
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
     if (!bestEl && inputEls.length > 0) bestEl = inputEls[0];
@@ -726,7 +703,9 @@ function resolveStepToActions(step, elements) {
     for (const el of elements) {
       const lbl = getLabel(el);
       let score = valWords.reduce((s, w) => s + (lbl.includes(w) ? 40 : 0), 0);
-      if (el.type === 'radio' || el.role === 'radio') score += 20;
+      if (el.type === 'radio' || el.role === 'radio') score += 30;
+      if (el.value?.toLowerCase() === step.value.toLowerCase()) score += 50;
+      if (el.id?.toLowerCase().includes(step.value.toLowerCase())) score += 40;
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
     if (bestEl && bestScore >= 20) {
@@ -742,7 +721,7 @@ function resolveStepToActions(step, elements) {
       const lbl = getLabel(el);
       let score = targetWords.reduce((s, w) => s + (lbl.includes(w) ? 35 : 0), 0);
       if (lbl.includes(step.target.toLowerCase())) score += 60;
-      if (el.tag === 'button' || el.role === 'button' || el.type === 'submit') score += 15;
+      if (el.tag === 'button' || el.role === 'button' || el.type === 'submit') score += 20;
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
     if (bestEl && bestScore >= 20) {
@@ -757,9 +736,6 @@ function resolveStepToActions(step, elements) {
   return actions;
 }
 
-// ============================================================================
-// BROADCAST STEP PROGRESS TO POPUP
-// ============================================================================
 function broadcastStepProgress() {
   if (!activeTask) return;
   chrome.runtime.sendMessage({
