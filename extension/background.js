@@ -523,22 +523,38 @@ function decomposeGoalIntoSteps(query, currentUrl) {
     steps.push({ type: 'navigate', url: siteUrl, label: `Open ${rawSite}` });
   }
 
-  // ── 3. UNIVERSAL LOGIN / SIGN IN WORKFLOW ON ANY SITE ──────────────────────
-  const isLoginGoal = /\b(?:log\s*in|sign\s*in|login|signin|enter\s*(?:my\s*)?account)\b/i.test(remainingQuery || q);
+  // ── 3. UNIVERSAL LOGIN / SIGN IN / CREDENTIALS WORKFLOW ON ANY SITE ───────
+  const isLoginGoal = /\b(?:log\s*in|sign\s*in|login|signin|enter\s*(?:my\s*)?account|credentials)\b/i.test(remainingQuery || q);
   if (isLoginGoal) {
-    // Extract username/email identifier from speech
+    const isGoogleOrCredentialSSO = /\b(?:google|first\s+email|default\s+email|my\s+email|first\s+account|credentials|first)\b/i.test(remainingQuery || q);
+
+    // Step 1: Click Sign In / Login button on homepage to enter login view
+    steps.push({ type: 'click', target: 'Sign in Log in Login', label: 'Click Sign in / Login' });
+
+    // Step 2: If SSO / Credentials / Google mentioned, click Continue with Google
+    if (isGoogleOrCredentialSSO) {
+      steps.push({ type: 'click', target: 'Continue with Google Sign in with Google Log in with Google Google', label: 'Click Continue with Google' });
+    }
+
+    // Step 3: Type username/email if explicitly mentioned (e.g. as mohit / with email x@gmail.com)
     const userMatch = (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)$/i)
                    || (remainingQuery || q).match(/\b(?:as|user(?:name)?|email|id)\s+([a-zA-Z0-9@._\-]+)\b/i);
     let username = userMatch ? userMatch[1].trim() : null;
-    const reservedUsers = ['login', 'signin', 'my', 'first', 'account', 'email', 'user', 'the', 'a', 'it', 'password'];
+    const reservedUsers = ['login', 'signin', 'my', 'first', 'account', 'email', 'user', 'the', 'a', 'it', 'password', 'credentials', 'google'];
     if (reservedUsers.includes(username?.toLowerCase())) username = null;
 
-    // Step: Click Sign In / Login button
-    steps.push({ type: 'click', target: 'Sign in Log in Login', label: 'Click Sign in / Login' });
-
-    // Step: Type username/email if mentioned
     if (username) {
       steps.push({ type: 'type', field: 'username email login identifier', value: username, label: `Enter username/email "${username}"` });
+    }
+
+    // Step 4: Password if provided
+    const passMatch = (remainingQuery || q).match(/\b(?:password|pass)\s+(?:is\s+)?([a-zA-Z0-9@#$_.\-]+)/i);
+    let password = passMatch ? passMatch[1].trim() : null;
+    if (['is', 'and', 'my', 'the'].includes(password?.toLowerCase())) password = null;
+
+    if (password) {
+      steps.push({ type: 'type', field: 'password', value: password, label: 'Enter password' });
+      steps.push({ type: 'click', target: 'Log in Sign in Submit', label: 'Submit Login' });
     }
 
     return steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
@@ -742,7 +758,8 @@ function resolveStepToActions(step, elements) {
         if (lbl.includes(w)) score += 35;
       }
       if (rawTarget.includes(lbl) || lbl.includes(rawTarget)) score += 60;
-      if (lbl === 'sign in' || lbl === 'log in' || lbl === 'login' || lbl === 'signin') score += 50;
+      if (rawTarget.includes('google') && (lbl.includes('google') || lbl.includes('continue with google') || lbl.includes('sign in with google') || lbl.includes('log in with google'))) score += 80;
+      if (rawTarget.includes('sign in') && (lbl === 'sign in' || lbl === 'log in' || lbl === 'login' || lbl === 'signin')) score += 50;
       if (el.tag === 'button' || el.role === 'button' || el.type === 'submit') score += 20;
       if (el.tag === 'a' || el.role === 'link') score += 15;
       if (score > bestScore) { bestScore = score; bestEl = el; }
