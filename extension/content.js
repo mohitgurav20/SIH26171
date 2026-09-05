@@ -537,20 +537,32 @@
         await sleep(300);
         return;
       }
-    } else if (element.isContentEditable) {
+    } else if (element.isContentEditable || element.getAttribute('contenteditable') === 'true' || element.getAttribute('role') === 'textbox' || element.closest('[contenteditable="true"]')) {
       // For Gmail/Outlook compose body which uses contenteditable divs
-      element.focus();
-      element.innerHTML = '';
-      try {
-        // Best method: execCommand preserves React/Angular event flow
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, text);
-      } catch(e) {
-        // Fallback: direct textContent set
-        element.textContent = text;
+      const targetEditable = element.isContentEditable ? element : (element.closest('[contenteditable="true"]') || element);
+      targetEditable.focus();
+      if (typeof targetEditable.click === 'function') {
+        try { targetEditable.click(); } catch(e) {}
       }
-      element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
-      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+      // Convert text with newlines into clean HTML paragraphs for rich text rendering
+      const lines = text.split(/\r?\n/);
+      const htmlContent = lines.map(line => {
+        const safe = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return safe ? `<div>${safe}</div>` : `<div><br></div>`;
+      }).join('');
+
+      targetEditable.innerHTML = htmlContent;
+
+      if (!targetEditable.innerText || targetEditable.innerText.trim().length === 0) {
+        targetEditable.innerText = text;
+      }
+
+      // Dispatch comprehensive input events so Gmail draft engine commits the text
+      targetEditable.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+      targetEditable.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      targetEditable.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      targetEditable.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
     }
 
     await sleep(200);
@@ -960,6 +972,25 @@
         if (!targetNode) {
           await sleep(400);
           targetNode = findElementSemantically(step);
+        }
+      }
+
+      // High-accuracy live Gmail Compose element resolution
+      const isGmail = window.location.hostname.includes('google') || window.location.hostname.includes('gmail');
+      if (isGmail && (step.action === 'type' || step.action === 'click')) {
+        const desc = (step.description || '').toLowerCase();
+        if (desc.includes('body') || desc.includes('message')) {
+          const bodyEl = document.querySelector('div[aria-label="Message Body"], div[aria-label*="Message Body"], div[role="textbox"][g_editable="true"], div.editable[contenteditable="true"]');
+          if (bodyEl) targetNode = bodyEl;
+        } else if (desc.includes('recipient') || desc.includes('to')) {
+          const toEl = document.querySelector('input[aria-label*="To"], input.agP, [aria-label*="recipients"], input[name="to"], div[role="dialog"] input[role="combobox"]');
+          if (toEl) targetNode = toEl;
+        } else if (desc.includes('subject')) {
+          const subjEl = document.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]');
+          if (subjEl) targetNode = subjEl;
+        } else if (desc.includes('compose')) {
+          const composeEl = document.querySelector('div[gh="cm"], .T-I-KE, [data-tooltip="Compose"], [aria-label="Compose"], [aria-label*="Compose"]');
+          if (composeEl) targetNode = composeEl;
         }
       }
 

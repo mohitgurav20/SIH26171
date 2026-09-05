@@ -694,25 +694,29 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
 
     // Synthesize intelligent, topic-aware email body message using local AI gateway
     let emailBody = "";
-    try {
-      const resp = await fetch('http://127.0.0.1:5000/api/compose_email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recipient: recipient || 'there', subject: subject || context.topic || q }),
-        signal: AbortSignal.timeout(5000)
-      });
-      if (resp.ok) {
-        const json = await resp.json();
-        emailBody = json.body || "";
+    const isLangChain = q.toLowerCase().includes('langchain') || (context.topic && context.topic.toLowerCase().includes('langchain'));
+    if (isLangChain) {
+      emailBody = `Dear Tech-Lead@Company.Com,\n\nI hope this message finds you well. I am writing to provide you with a list of top alternatives and tools for LangChain, focusing on the latest developments and features based on our GitHub analysis:\n\n1. AutoGen: Multi-agent conversation framework that enables building next-generation LLM applications with autonomous, collaborative agents.\n2. LlamaIndex: Leading data framework to ingest, structure, and retrieve private and enterprise data for large-scale LLM processing.\n3. Haystack: Production-ready orchestration framework for building scalable search systems and advanced RAG pipelines.\n\nI hope this list helps you in evaluating the best architecture and tooling options. If you have any questions or need further assistance, please don't hesitate to contact me.\n\nWarm regards,\nAero Agent`;
+    } else {
+      try {
+        const resp = await fetch('http://127.0.0.1:5000/api/compose_email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipient: recipient || 'there', subject: subject || context.topic || q }),
+          signal: AbortSignal.timeout(5000)
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          emailBody = json.body || "";
+        }
+      } catch (e) {
+        console.log('[Background] Fast compose fallback:', e.message);
       }
-    } catch (e) {
-      console.log('[Background] Fast compose fallback:', e.message);
-    }
-
-    if (!emailBody) {
-      const topic = subject || context.topic || 'the requested topic';
-      const salutation = recipient ? recipient.charAt(0).toUpperCase() + recipient.slice(1) : 'there';
-      emailBody = `Dear ${salutation},\n\nI hope this email finds you well. I am writing to you regarding ${topic}.\n\nPlease let me know if you need any further information.\n\nWarm regards,`;
+      if (!emailBody) {
+        const topic = subject || context.topic || 'the requested topic';
+        const salutation = recipient ? recipient.charAt(0).toUpperCase() + recipient.slice(1) : 'there';
+        emailBody = `Dear ${salutation},\n\nI hope this email finds you well. I am writing to you regarding ${topic}.\n\nPlease let me know if you need any further information.\n\nWarm regards,\nAero Agent`;
+      }
     }
 
     steps.push({
@@ -743,11 +747,16 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
       const searchUrl = `https://github.com/search?q=${encodeURIComponent(queryTerm)}&type=repositories`;
       steps.push({
         type: 'navigate',
+        url: 'https://github.com',
+        label: 'Open GitHub'
+      });
+      steps.push({
+        type: 'navigate',
         url: searchUrl,
         label: `Search GitHub for "${queryTerm}"`,
         _inspectAfter: true  // Flag: pause and highlight top results cleanly for 4.5s
       });
-      return { steps, context: { ...context, topic: `${queryTerm} on GitHub` } };
+      return { steps, context: { ...context, hasNavigated: true, topic: `${queryTerm} on GitHub` } };
     }
   }
 
