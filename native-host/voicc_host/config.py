@@ -46,8 +46,8 @@ class ModelConfig:
     draft: str = _env("VOICC_DRAFT_MODEL", "qwen2.5:0.5b")
     # Full text reasoner, used when the draft model is not confident.
     text: str = _env("VOICC_TEXT_MODEL", "qwen2.5:3b")
-    # Vision model: disabled (moondream not installed — use DOM-only perception).
-    vision: str = _env("VOICC_VISION_MODEL", "")
+    # Vision model: Moondream for local screen comprehension.
+    vision: str = _env("VOICC_VISION_MODEL", "moondream:latest")
     # Optional larger vision model behind the high-accuracy toggle (117).
     vision_fallback: str = _env("VOICC_VISION_FALLBACK_MODEL", "")
     # Local embedding model used by Siddu's memory layer.

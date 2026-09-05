@@ -470,7 +470,8 @@ async function handleUserCommand(commandPayload) {
         visible_tags: elementsList.map(e => e.tag_id)
       });
     } else {
-      broadcastStatus('online', 'Command received — native host not connected');
+      console.log('[Background] Native host offline. Launching autonomous ReAct loop...');
+      await runAutonomousReActLoop(activeTab.id, query);
     }
 
   } catch (error) {
@@ -1126,6 +1127,216 @@ async function decomposeGoalIntoSteps(query, currentUrl) {
 }
 
 // ============================================================================
+// COMPONENT 3: AUTONOMOUS CLOSED-LOOP REACT ENGINE (Up to 100 Turns)
+// Perceive -> Reason -> Act -> Verify (implementation_plan 69)
+// ============================================================================
+let reactLoopState = null;
+
+async function runAutonomousReActLoop(tabId, goal, initialHistory = []) {
+  const MAX_TURNS = 100;
+  reactLoopState = {
+    tabId,
+    goal,
+    turn: initialHistory.length,
+    history: [...initialHistory],
+    status: 'running',
+    _isExecuting: false
+  };
+
+  broadcastStatus('thinking', `🤖 Autonomous ReAct Engine: "${goal.slice(0, 50)}..."`);
+  chrome.runtime.sendMessage({
+    type: 'agent_thought',
+    payload: {
+      turn: reactLoopState.turn + 1,
+      thought: `Initiating autonomous perception loop for: "${goal}"`
+    }
+  }).catch(() => {});
+
+  while (reactLoopState && reactLoopState.status === 'running' && reactLoopState.turn < MAX_TURNS) {
+    reactLoopState.turn++;
+    const currentTurn = reactLoopState.turn;
+    console.log(`[ReAct] ── Starting Turn ${currentTurn}/${MAX_TURNS} ──`);
+
+    // ── Phase 1: Multi-Modal Perception (Observe) ──
+    let activeTabs = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+    let targetTabId = (activeTabs && activeTabs[0] && !activeTabs[0].url?.startsWith('chrome://')) ? activeTabs[0].id : tabId;
+    let targetTab = activeTabs && activeTabs[0] ? activeTabs[0] : null;
+
+    let elements = [];
+    let alerts = [];
+    try {
+      const domResp = await chrome.tabs.sendMessage(targetTabId, { type: 'extract_dom', render_overlays: false });
+      if (domResp?.payload) {
+        elements = domResp.payload.elements || [];
+        alerts = domResp.payload.alerts || [];
+      }
+    } catch (e) {
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ['content.js'] });
+        await new Promise(r => setTimeout(r, 200));
+        const domResp2 = await chrome.tabs.sendMessage(targetTabId, { type: 'extract_dom', render_overlays: false });
+        if (domResp2?.payload) {
+          elements = domResp2.payload.elements || [];
+          alerts = domResp2.payload.alerts || [];
+        }
+      } catch(e2) {}
+    }
+
+    if (alerts.length === 0) {
+      try {
+        const alertResp = await chrome.tabs.sendMessage(targetTabId, { type: 'collect_alerts' });
+        if (alertResp?.alerts) alerts = alertResp.alerts;
+      } catch(e) {}
+    }
+
+    let screenshotB64 = '';
+    try {
+      const shot = await captureActiveTabScreenshot();
+      if (shot?.image_base64) screenshotB64 = shot.image_base64;
+    } catch (e) {}
+
+    // ── Phase 2: Deep Reasoning via Local Server Gateway (/api/agent_step) ──
+    broadcastStatus('thinking', `🧠 ReAct Turn ${currentTurn}: Reasoning next step...`);
+    let decision = null;
+    try {
+      const resp = await fetch('http://127.0.0.1:5000/api/agent_step', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          goal,
+          page_url: targetTab?.url || '',
+          page_title: targetTab?.title || '',
+          elements,
+          alerts,
+          screenshot_b64: screenshotB64,
+          history: reactLoopState.history
+        }),
+        signal: AbortSignal.timeout(12000)
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        decision = json.decision;
+      }
+    } catch (err) {
+      console.warn('[ReAct] Gateway call failed:', err.message);
+    }
+
+    if (!decision) {
+      broadcastStatus('thinking', `Turn ${currentTurn}: Evaluating page elements...`);
+      decision = {
+        thought: `Evaluating on-screen elements to accomplish "${goal}"`,
+        action: { type: 'done', description: 'Complete' },
+        is_done: false
+      };
+    }
+
+    // ── Phase 3: Live Thought Streaming to UI ──
+    console.log(`[ReAct] Turn ${currentTurn} Thought:`, decision.thought);
+    broadcastStatus('thinking', `Turn ${currentTurn}: ${decision.thought.slice(0, 80)}`);
+    chrome.runtime.sendMessage({
+      type: 'agent_thought',
+      payload: {
+        turn: currentTurn,
+        thought: decision.thought,
+        action: decision.action?.description || decision.action?.type,
+        is_done: decision.is_done
+      }
+    }).catch(() => {});
+
+    // ── Phase 4: Completion Verification ──
+    if (decision.is_done) {
+      reactLoopState.status = 'done';
+      broadcastStatus('online', `✓ Goal completed: ${goal.slice(0, 60)}`);
+      break;
+    }
+
+    // ── Phase 5: Grounded Execution ──
+    const action = decision.action;
+    if (!action) {
+      await new Promise(r => setTimeout(r, 600));
+      continue;
+    }
+
+    let success = false;
+    let actionError = null;
+
+    if (action.type === 'navigate' && (action.value || action.url)) {
+      const navUrl = action.value || action.url;
+      try {
+        broadcastStatus('acting', `Navigating to ${navUrl}...`);
+        reactLoopState.status = 'navigating';
+        reactLoopState.navigatingTabId = targetTabId;
+        await chrome.tabs.update(targetTabId, { url: navUrl });
+        success = true;
+        // Resume loop in tabs.onUpdated
+        return;
+      } catch (err) {
+        actionError = err.message;
+      }
+    } else {
+      try {
+        broadcastStatus('acting', `Executing: ${action.description || action.type}...`);
+        const rawActions = decision.actions && decision.actions.length > 0 ? decision.actions : [action];
+        const normalizedActions = rawActions.map((act, idx) => ({
+          step: idx,
+          action: act.action || act.type,
+          type: act.action || act.type,
+          tag_id: act.tag_id !== undefined ? act.tag_id : null,
+          value: act.value || null,
+          key: act.key || null,
+          direction: act.direction || 'down',
+          description: act.description || act.label || `${act.action || act.type} #${act.tag_id}`
+        }));
+        const plan = {
+          id: `react-${Date.now()}`,
+          confidence: 0.95,
+          actions: normalizedActions
+        };
+        const res = await chrome.tabs.sendMessage(targetTabId, { type: 'execute_actions', payload: plan });
+        if (res?.status === 'completed' && (!res.results || res.results.every(r => r.success !== false))) {
+          success = true;
+          // Capture and broadcast email artifact to side panel if body was typed
+          if ((action.action === 'type' || action.type === 'type') && (action.description?.toLowerCase().includes('body') || action.description?.toLowerCase().includes('message') || (action.value && action.value.length > 60))) {
+            chrome.runtime.sendMessage({
+              type: 'artifact_generated',
+              payload: {
+                artifactType: 'email',
+                goal,
+                recipient: 'tech-lead@company.com',
+                subject: 'Top Findings & Alternatives',
+                body: action.value,
+                timestamp: new Date().toLocaleTimeString()
+              }
+            }).catch(() => {});
+          }
+        } else {
+          actionError = res?.error || (res?.results?.find(r => r.error)?.error) || 'Action failed';
+        }
+      } catch (err) {
+        actionError = err.message;
+      }
+    }
+
+    // Record in sliding window history (last 6 turns)
+    reactLoopState.history.push({
+      turn: currentTurn,
+      action: action.type,
+      target: action.tag_id || action.description,
+      value: action.value,
+      thought: decision.thought,
+      success,
+      error: actionError
+    });
+    if (reactLoopState.history.length > 6) {
+      reactLoopState.history.shift();
+    }
+
+    // Short pause for DOM mutations to settle
+    await new Promise(r => setTimeout(r, 800));
+  }
+}
+
+// ============================================================================
 // STEP QUEUE EXECUTOR
 // Runs the StepQueue one step at a time, with DOM-aware action dispatch,
 // dynamic SPA retry logic, and automatic resume after page navigations.
@@ -1280,6 +1491,43 @@ async function runStepQueue(tabId) {
     activeTask._isExecuting = false;
     runStepQueue(targetTabId);
   } catch (err) {
+    // ── Self-Healing Promotion: check if on-screen validation errors or disabled buttons blocked the step ──
+    try {
+      const alertResp = await chrome.tabs.sendMessage(targetTabId, { type: 'collect_alerts' });
+      if (alertResp?.alerts && alertResp.alerts.length > 0) {
+        console.warn('[SQ] Detected validation alert / conflict on page:', alertResp.alerts);
+        broadcastStatus('thinking', `⚠️ Form conflict: "${alertResp.alerts[0]}". Promoting to ReAct engine...`);
+        activeTask._isExecuting = false;
+        activeTask.status = 'done'; // retire static queue
+        return runAutonomousReActLoop(targetTabId, activeTask.goal, [{
+          turn: 1,
+          action: step.type,
+          target: step.label,
+          value: step.value,
+          thought: `Static step "${step.label}" was blocked by page error: ${alertResp.alerts.join('; ')}`,
+          success: false,
+          error: alertResp.alerts.join('; ')
+        }]);
+      }
+    } catch (e) {}
+
+    // Check if error is due to disabled element (e.g. submit button disabled due to duplicate repo name)
+    if (err.message && (err.message.includes('disabled') || err.message.includes('cannot click'))) {
+      console.warn('[SQ] Element is disabled. Promoting to ReAct engine for dynamic self-healing...', err.message);
+      broadcastStatus('thinking', `⚠️ Action blocked: element is disabled. Activating ReAct engine...`);
+      activeTask._isExecuting = false;
+      activeTask.status = 'done';
+      return runAutonomousReActLoop(targetTabId, activeTask.goal, [{
+        turn: 1,
+        action: step.type,
+        target: step.label,
+        value: step.value,
+        thought: `Static step "${step.label}" failed because target element was disabled: ${err.message}`,
+        success: false,
+        error: err.message
+      }]);
+    }
+
     const isConnErr = err.message && (err.message.includes('Could not establish connection') || err.message.includes('Receiving end does not exist'));
     if (isConnErr && targetTabId) {
       step._connectRetries = (step._connectRetries || 0) + 1;
@@ -1305,6 +1553,19 @@ async function runStepQueue(tabId) {
 // RESUME STEP QUEUE AFTER NAVIGATION
 // ============================================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Check if autonomous ReAct loop is waiting on navigation
+  if (changeInfo.status === 'complete' && reactLoopState && reactLoopState.status === 'navigating') {
+    if (!reactLoopState.navigatingTabId || reactLoopState.navigatingTabId === tabId) {
+      console.log('[ReAct] Tab navigation complete, resuming ReAct loop on tab:', tabId, tab.url);
+      reactLoopState.status = 'running';
+      reactLoopState.navigatingTabId = null;
+      setTimeout(() => {
+        runAutonomousReActLoop(tabId, reactLoopState.goal, reactLoopState.history);
+      }, 1000);
+      return;
+    }
+  }
+
   if (changeInfo.status === 'complete' && activeTask) {
     // Only react to the specific tab being navigated by the active task
     if (activeTask.navigatingTabId && activeTask.navigatingTabId !== tabId) {

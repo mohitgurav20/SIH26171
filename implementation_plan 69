@@ -1,0 +1,272 @@
+# Master Architecture Plan: The Autonomous Closed-Loop Reasoning "Beast" Engine
+
+## 1. Problem Statement & Core Architectural Diagnosis
+
+The previous agent failed because it was **not an autonomous agent** — it was a **static, open-loop macro player**:
+1. It broke user commands into an upfront static array of 4 steps using regex heuristics (`decomposeSingleStage`).
+2. It executed those steps blindly via `runStepQueue`.
+3. **The LLM was never consulted during execution.**
+4. **The Vision Model (`moondream`) was completely shut off** (`vision = ""` in `config.py`).
+5. **There was zero sensory feedback**:
+   - When GitHub showed `⚠️ siddu already exists in this account`, the agent never read it.
+   - When `Create repository` was disabled, JavaScript `.click()` didn't throw an error, so the agent assumed success.
+   - When modern Primer dropdowns (`[ Public ▾ ]`) replaced radio buttons, the static script failed silently.
+
+To execute **arbitrary, complex, real-world tasks (even 100 steps)** on ANY website (GitHub, Gmail, Amazon, YouTube, LeetCode, Canva, Wikipedia, internal portals), the agent must operate as a **Closed-Loop Markov Decision Process / ReAct Agent**.
+
+---
+
+## 2. The Core Architecture: Closed-Loop ReAct Engine
+
+Every single action in the task lifecycle is governed by the **Perceive $\rightarrow$ Reason $\rightarrow$ Act $\rightarrow$ Verify** loop:
+
+```
+                               ┌────────────────────────────────────────────────────────┐
+                               │                     USER COMMAND                       │
+                               │  "Create a private repo called siddu with a readme"   │
+                               │  "Find the top 3 papers on arXiv and download them"    │
+                               │  "Order groceries from cart on Amazon"                │
+                               └───────────────────────────┬────────────────────────────┘
+                                                           │
+                                                           ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                 AUTONOMOUS AGENT REASONING LOOP (Up to 100 Turns)                                     │
+│                                                                                                                       │
+│  [PHASE 1: LIVE MULTI-MODAL PERCEPTION (Observe)]                                                                     │
+│   ├── 1. DOM Semantic Crawler: Extracts all interactive elements (tags, roles, text, values, disabled state).        │
+│   ├── 2. Error & Alert Scanner: Scans for active errors ([role="alert"], .flash-error, validation warnings).         │
+│   ├── 3. Screen Capture + Privacy Filter: HTML5 canvas masks passwords, Aadhaar, PAN, and sensitive PII.             │
+│   └── 4. Moondream VLM Comprehension: Fast visual scan for open dialogs, modal backdrops, popups, and banners.        │
+│                                                                                                                       │
+│  [PHASE 2: DEEP REASONING & DECISION (Qwen2.5-3B)]                                                                    │
+│   ├── Ingests: Goal + Current URL + Screen Context + Live Error Alerts + Interactive Elements + Action History.       │
+│   ├── Thinks:                                                                                                         │
+│   │   • What was the outcome of my last action? Did an error appear?                                                  │
+│   │   • Is the target button disabled? If yes, what prerequisite is missing?                                          │
+│   │   • Is there an obscuring popup/modal that must be dismissed first?                                               │
+│   │   • What is the single best next action to move closer to the goal?                                               │
+│   └── Outputs Structured JSON:                                                                                        │
+│       {                                                                                                               │
+│         "thought": "I notice that 'siddu' is already taken. The submit button is disabled. I will change it to ...",  │
+│         "action": { "type": "type", "tag_id": 2, "value": "siddu-dev" },                                              │
+│         "is_done": false                                                                                              │
+│       }                                                                                                               │
+│                                                                                                                       │
+│  [PHASE 3: GROUNDED ROBUST EXECUTION (content.js)]                                                                    │
+│   ├── 1. Pre-Condition Guard: Throws error if attempting to click disabled elements (prevents false completions).    │
+│   ├── 2. Modern Control Dispatch: Handles ActionMenus, Primer dropdowns, Popovers, switches, contenteditable.        │
+│   ├── 3. Native Event Synthesis: PointerEvent + MouseEvent + React _valueTracker reset + input/change dispatch.       │
+│   └── 4. Mutation Quiescence: Waits for DOM mutations to settle (150ms debounce) so SPAs fully hydrate.              │
+│                                                                                                                       │
+│  [PHASE 4: STATE VERIFICATION & LOOP CONTINUATION]                                                                    │
+│   ├── If is_done == true: Verify real post-condition (e.g. URL changed or success confirmation exists).               │
+│   ├── If action caused navigation: Background worker intercepts chrome.tabs.onUpdated and resumes loop.               │
+│   └── Record (Turn, Thought, Action, Result) into sliding-window History -> Proceed to Turn t+1.                      │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Concrete File-by-File Changes
+
+### Component 1: Python Gateway & VLM Integration (`native-host/` & `server/`)
+
+#### [MODIFY] [native-host/voicc_host/config.py](file:///c:/Users/mayab/OneDrive/Desktop/test/native-host/voicc_host/config.py)
+* Enable Moondream by default:
+  ```python
+  vision: str = _env("VOICC_VISION_MODEL", "moondream:latest")
+  ```
+* Set keep-alive to `"60m"` in Ollama client calls so the model stays in VRAM/RAM, keeping visual latency under 4.5s.
+
+#### [MODIFY] [server/app.py](file:///c:/Users/mayab/OneDrive/Desktop/test/server/app.py)
+* **New Core Endpoint: `POST /api/agent_step`**:
+  * **Input Payload**:
+    ```json
+    {
+      "goal": "user task",
+      "page_url": "https://...",
+      "page_title": "Page Title",
+      "elements": [{ "tag_id": 1, "role": "textbox", "text": "...", "value": "...", "disabled": false }],
+      "alerts": ["siddu already exists in this account"],
+      "screenshot_b64": "base64...",
+      "history": [{ "action": "type", "target": "Repository name", "value": "siddu", "thought": "..." }]
+    }
+    ```
+  * **Visual Perception (Moondream)**:
+    If `screenshot_b64` is provided:
+    Queries `moondream:latest` with:
+    `"Task: '{goal}'. Describe visible modal dialogs, error messages, validation alerts, or disabled buttons in 2 sentences."`
+    Returns `vlm_summary`.
+  * **Reasoning Engine (Qwen2.5-3B)**:
+    Uses `build_agent_step_prompt` with:
+    - User Goal
+    - Live URL & Page Title
+    - VLM Visual Summary (Moondream)
+    - Live Error Alerts (e.g. `⚠️ siddu already exists in this account`)
+    - Interactive Elements (formatted as `[tag_id] role "label" value="..." disabled=true/false`)
+    - Recent Action History (last 6 turns)
+    - ReAct Instructions:
+      1. Always inspect the outcome of the last action.
+      2. If an error is present, adapt immediately (e.g., modify input, close popup).
+      3. Never click a disabled button; resolve missing fields first.
+      4. Set `is_done: true` only when the ultimate objective is verified.
+  * **Output Schema**:
+    ```json
+    {
+      "thought": "Deep explanation of what is on screen and why this action was selected",
+      "action": {
+        "type": "click" | "type" | "select" | "press_key" | "scroll" | "navigate" | "done",
+        "tag_id": 4,
+        "value": "text or key",
+        "description": "Short action summary"
+      },
+      "is_done": false
+    }
+    ```
+
+---
+
+### Component 2: Sensory Perception & Grounded Execution (`extension/content.js`)
+
+#### [MODIFY] [extension/content.js](file:///c:/Users/mayab/OneDrive/Desktop/test/extension/content.js)
+1. **Live Error & Alert Collector (`collectPageAlerts`)**:
+   * Scans document for active error indicators:
+     - `[role="alert"]`, `.flash-error`, `.TextInput-message--error`, `p[class*="error"]`, `span[id*="error"]`, `div[class*="error"]`
+     - CSS red text colors (`#cf222e`, `#e11d48`, `#ef4444`)
+   * Returns array of error strings so the agent "sees" form rejections immediately.
+2. **Alert Elements in DOM Crawler (`extractInteractiveElements`)**:
+   * Adds error alert nodes directly into the extracted element list with role `"alert"` so Qwen2.5 sees them in the text prompt:
+     `[3] alert "siddu already exists in this account"`
+3. **Pre-Action Disabled Guard**:
+   * In `simulateClick`:
+     ```javascript
+     if (element.disabled || element.getAttribute('aria-disabled') === 'true') {
+       throw new Error(`Element "${element.textContent.trim() || element.id}" is disabled and cannot be clicked.`);
+     }
+     ```
+   * Stops the agent from falsely claiming success on un-submitted forms.
+4. **Modern UI Support (ActionMenus, Popovers, Switches)**:
+   * Support Primer `[ Public ▾ ]` dropdowns: clicks trigger button, waits for Popover menu items (`[role="menuitemradio"]`), and selects option.
+   * Support toggle switches (`button[role="switch"]` and `input[type="checkbox"]`): toggles state and fires `input` and `change` events.
+5. **Mutation Quiescence**:
+   * Debounced observer (150ms) to ensure SPAs finish rendering before returning element coordinates.
+
+---
+
+### Component 3: Closed-Loop ReAct Controller (`extension/background.js`)
+
+#### [MODIFY] [extension/background.js](file:///c:/Users/mayab/OneDrive/Desktop/test/extension/background.js)
+1. **Replace `decomposeGoalIntoSteps` + `runStepQueue` with `runAutonomousReActLoop`**:
+   ```javascript
+   async function runAutonomousReActLoop(tabId, goal) {
+     let history = [];
+     let turn = 0;
+     const MAX_TURNS = 100; // Supports long multi-step workflows
+
+     activeTask = { goal, status: 'running', turn: 0 };
+     broadcastStatus('thinking', `Starting autonomous task: "${goal}"`);
+
+     while (turn < MAX_TURNS) {
+       // 1. Observe
+       const domData = await getTabDom(tabId);
+       const alerts = await getTabAlerts(tabId);
+       const screenshot = await captureTabSanitized(tabId);
+
+       // 2. Reason (Server Gateway)
+       const decision = await fetchAgentStep({
+         goal,
+         pageUrl: tab.url,
+         pageTitle: tab.title,
+         elements: domData.elements,
+         alerts,
+         screenshotB64: screenshot.b64,
+         history
+       });
+
+       // 3. Live Thought Streaming to UI
+       broadcastStatus('thinking', decision.thought);
+
+       // 4. Completion Check
+       if (decision.is_done) {
+         const verified = await verifyGoalAccomplished(tabId, goal);
+         if (verified) {
+           broadcastStatus('online', `✓ Goal completed: ${goal}`);
+           break;
+         }
+       }
+
+       // 5. Grounded Execution
+       const execResult = await executeActionOnTab(tabId, decision.action);
+       history.push({
+         turn,
+         action: decision.action.type,
+         target: decision.action.description || decision.action.tag_id,
+         value: decision.action.value,
+         thought: decision.thought,
+         success: execResult.success,
+         error: execResult.error
+       });
+
+       // Keep history sliding window (last 6 turns)
+       if (history.length > 6) history.shift();
+
+       turn++;
+       await sleep(350);
+     }
+   }
+   ```
+2. **Cross-Page Navigation Continuity**:
+   * When an action navigates to a new URL, `chrome.tabs.onUpdated` detects completion and resumes `runAutonomousReActLoop` seamlessly on the new page.
+3. **Loop Detection & Self-Healing**:
+   * If the agent attempts the exact same failing action 2 times, it injects a warning into the prompt:
+     `"WARNING: Previous action failed with error. You MUST try an alternative approach."`
+
+---
+
+### Component 4: Explainable Thought Stream UI (`extension/popup.js`)
+
+#### [MODIFY] [extension/popup.js](file:///c:/Users/mayab/OneDrive/Desktop/test/extension/popup.js)
+* Update the Reasoning Box to stream the agent's live **thoughts, decisions, and self-healing actions**:
+  ```html
+  <div class="reasoning-box">
+    <strong>🧠 Agent Thought (Turn 3):</strong>
+    "I see the repository name 'siddu' already exists in this account. The create button is disabled. I will change the name to 'siddu-dev' to resolve this error."
+  </div>
+  ```
+* Dynamically append step results to the execution list turn-by-turn.
+
+---
+
+## 4. Universal Verification Plan
+
+### Test 1: Complex Form with Conflict & Modern Controls (GitHub Repo)
+* **Goal**: *"go to github and create me a repo called siddu and make it private and also add a readme"*
+* **Verification Criteria**:
+  1. Detects `⚠️ siddu already exists in this account` on screen.
+  2. Autonomously changes name to `siddu-dev` without user intervention.
+  3. Opens `[ Public ▾ ]` ActionMenu dropdown and selects `Private`.
+  4. Toggles `Add README` switch to ON.
+  5. Waits for `Create repository` button to become enabled before clicking.
+  6. Asserts URL changed to `github.com/<user>/siddu-dev` before declaring completion.
+
+### Test 2: Multi-Step Cross-Domain Workflow (Gmail Composition)
+* **Goal**: *"Open Gmail, click Compose, write an email to test@domain.com with subject 'Report' and body 'Completed'"*
+* **Verification Criteria**:
+  1. Navigates to `mail.google.com`.
+  2. Detects and clicks `Compose` button.
+  3. Fills `To`, `Subject`, and contenteditable message body.
+  4. Clicks Send and verifies compose window unmounts.
+
+### Test 3: Search, Inspect & Extract Workflow (Wikipedia / Documentation)
+* **Goal**: *"Search Wikipedia for ISRO Chandrayaan-3, click the article, and scroll down to Launch Details"*
+* **Verification Criteria**:
+  1. Types into search input and submits.
+  2. Identifies top search result link and navigates.
+  3. Scrolls down to the target section.
+
+### Test 4: Long-Horizon 20+ Step Task
+* **Goal**: Any multi-page wizard, e-commerce checkout flow, or multi-tab research flow requiring 15–30 turns.
+* **Verification Criteria**:
+  1. Loop runs continuously without stalling or crashing.
+  2. Self-heals on unexpected popups or cookie dialogs.
+  3. Reaches ultimate goal successfully.

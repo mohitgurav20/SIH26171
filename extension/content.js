@@ -145,6 +145,56 @@
   }
 
   /**
+   * Component 2: Live Error & Alert Collector
+   * Scans document for active error indicators, validation warnings, and flash banners.
+   */
+  function collectPageAlerts() {
+    const alerts = [];
+    const alertSelectors = [
+      '[role="alert"]',
+      '.flash-error',
+      '.flash-warn',
+      '.TextInput-message--error',
+      'p[class*="error" i]',
+      'div[class*="error" i]',
+      'span[class*="error" i]',
+      'dd[class*="error" i]',
+      '.error-message',
+      '.alert-danger',
+      '.alert-warning',
+      '[aria-invalid="true"]'
+    ];
+    try {
+      const alertNodes = document.querySelectorAll(alertSelectors.join(', '));
+      alertNodes.forEach(node => {
+        const style = window.getComputedStyle(node);
+        if (style.display !== 'none' && style.visibility !== 'hidden' && (node.offsetWidth > 0 || node.offsetHeight > 0)) {
+          const txt = (node.textContent || '').trim().replace(/\s+/g, ' ');
+          if (txt && txt.length > 2 && txt.length < 200 && !alerts.includes(txt)) {
+            alerts.push(txt);
+          }
+        }
+      });
+
+      // Also scan for red text nodes indicating validation errors
+      const candidateNodes = document.querySelectorAll('p, span, div, small, em');
+      candidateNodes.forEach(node => {
+        if (node.children.length === 0 && (node.offsetWidth > 0 || node.offsetHeight > 0)) {
+          const style = window.getComputedStyle(node);
+          const col = style.color || '';
+          if (col.includes('207, 34') || col.includes('225, 29') || col.includes('239, 68') || col.includes('220, 38') || col.includes('255, 0, 0')) {
+            const txt = (node.textContent || '').trim().replace(/\s+/g, ' ');
+            if (txt && txt.length > 2 && txt.length < 200 && !alerts.includes(txt)) {
+              alerts.push(txt);
+            }
+          }
+        }
+      });
+    } catch(e) {}
+    return alerts;
+  }
+
+  /**
    * Pass 2: Extract semantic attributes & compute coordinates
    */
   function extractInteractiveElements(forceFull = true) {
@@ -270,6 +320,21 @@
       extracted.push(item);
     }
 
+    // Component 2: Inject active on-screen alerts into extracted elements so LLM sees them immediately
+    const activeAlerts = collectPageAlerts();
+    activeAlerts.forEach(alertText => {
+      const currentTagId = tagId++;
+      extracted.push({
+        tag_id: currentTagId,
+        tag: 'div',
+        role: 'alert',
+        text: alertText,
+        aria_label: alertText,
+        interactive: false,
+        disabled: false
+      });
+    });
+
     const reduction = rawCount > 0
       ? (((rawCount - extracted.length) / rawCount) * 100).toFixed(1)
       : 0;
@@ -278,6 +343,7 @@
       url: window.location.href,
       title: document.title,
       elements: extracted,
+      alerts: activeAlerts,
       element_count: extracted.length,
       raw_element_count: rawCount,
       reduction_percent: parseFloat(reduction)
@@ -358,6 +424,10 @@
 
     // Find clickable parent if this is an inner text/icon node
     const clickableParent = element.closest('a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], [jsaction*="click"], [onclick]') || element;
+
+    if (clickableParent.disabled || clickableParent.getAttribute('aria-disabled') === 'true') {
+      throw new Error(`Element "${(clickableParent.textContent || clickableParent.getAttribute('aria-label') || clickableParent.id || 'button').trim()}" is disabled and cannot be clicked.`);
+    }
 
     try {
       clickableParent.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
@@ -994,17 +1064,18 @@
         }
       }
 
+      const actionType = step.action || step.type;
       const result = {
         plan_id: planId,
         step_index: stepIndex,
-        action: step.action,
+        action: actionType,
         success: false,
         error: null,
         page_changed: false
       };
 
       try {
-        switch (step.action) {
+        switch (actionType) {
           case 'click':
             if (!targetNode) {
               result.success = false;
@@ -1162,6 +1233,12 @@
           renderNumberedOverlays(domData.elements);
         }
         sendResponse({ type: 'dom_data', payload: domData });
+        break;
+      }
+
+      case 'collect_alerts': {
+        const alerts = collectPageAlerts();
+        sendResponse({ alerts });
         break;
       }
 

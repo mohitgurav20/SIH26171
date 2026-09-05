@@ -489,6 +489,121 @@ def decompose_goal():
     return jsonify({"status": "fallback", "source": "heuristic"})
 
 
+@app.route("/api/agent_step", methods=["POST"])
+def agent_step():
+    """Autonomous Closed-Loop ReAct Engine single turn (implementation_plan 69).
+
+    Ingests: goal, page_url, page_title, elements, alerts, screenshot_b64, history.
+    1. Moondream VLM Visual Scan (if screenshot provided).
+    2. Qwen2.5 Deep ReAct Reasoning.
+    3. Outputs JSON: {"thought": "...", "action": {"type": "...", "tag_id": N, ...}, "is_done": false}.
+    """
+    data = request.get_json(force=True) or {}
+    goal = str(data.get("goal") or "").strip()
+    page_url = str(data.get("page_url") or "").strip()
+    page_title = str(data.get("page_title") or "").strip()
+    elements = data.get("elements") or []
+    alerts = data.get("alerts") or []
+    screenshot_b64 = str(data.get("screenshot_b64") or "").strip()
+    history = data.get("history") or []
+
+    if not goal:
+        return jsonify({"status": "error", "message": "Missing goal"}), 400
+
+    # ── Phase 1: Moondream Visual Scan ──
+    vlm_summary = ""
+    if screenshot_b64 and CONFIG.models.vision:
+        try:
+            vlm_prompt = (
+                f"Task: '{goal}'. "
+                "Describe any visible modal dialogs, error messages, validation alerts, or disabled buttons in 2 sentences."
+            )
+            vlm_resp = ollama_client.generate(
+                role="vision",
+                prompt=vlm_prompt,
+                images=[screenshot_b64],
+                options={"temperature": 0.1, "num_predict": 100}
+            )
+            vlm_summary = vlm_resp.text.strip()
+            log.info("Moondream VLM Visual Summary: %s", vlm_summary[:100])
+        except Exception as e:
+            log.info("Moondream VLM scan bypassed: %s", e)
+
+    # ── Phase 2: Qwen2.5 Deep ReAct Reasoning ──
+    prompt = build_agent_step_prompt(
+        goal=goal,
+        page_url=page_url,
+        page_title=page_title,
+        elements=elements,
+        vlm_summary=vlm_summary,
+        history=history,
+        alerts=alerts
+    )
+
+    decision = None
+    # Try text model (qwen2.5:3b), fallback to draft model if needed
+    for role in ("text", "draft"):
+        try:
+            resp = ollama_client.generate(
+                role=role,
+                prompt=prompt,
+                options={"temperature": 0.2, "top_p": 0.9}
+            )
+            raw = resp.text.strip()
+            import re
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                parsed = json.loads(m.group(0))
+                actions = parsed.get("actions") or []
+                thought = parsed.get("reasoning") or parsed.get("thought") or "Analyzing page and selecting best action."
+                is_done = bool(parsed.get("is_done", False))
+
+                # Normalize action schema
+                single_action = None
+                if actions and isinstance(actions, list) and len(actions) > 0:
+                    first = actions[0]
+                    single_action = {
+                        "type": first.get("type", "click"),
+                        "tag_id": first.get("tag_id"),
+                        "value": first.get("value"),
+                        "key": first.get("key"),
+                        "description": first.get("intent") or first.get("description") or f"{first.get('type')} on #{first.get('tag_id')}"
+                    }
+                    if first.get("type") == "done":
+                        is_done = True
+                elif parsed.get("action"):
+                    act = parsed.get("action")
+                    single_action = {
+                        "type": act.get("type", "click"),
+                        "tag_id": act.get("tag_id"),
+                        "value": act.get("value"),
+                        "key": act.get("key"),
+                        "description": act.get("description") or act.get("intent") or f"{act.get('type')}"
+                    }
+
+                decision = {
+                    "thought": thought,
+                    "action": single_action or {"type": "done", "description": "Goal accomplished"},
+                    "actions": actions or ([single_action] if single_action else []),
+                    "is_done": is_done,
+                    "source": f"llm-{role}"
+                }
+                break
+        except Exception as e:
+            log.warning("Ollama ReAct reasoning with role '%s' error: %s", role, e)
+
+    if not decision:
+        decision = {
+            "thought": "Directing next action from page elements.",
+            "action": {"type": "done", "description": "Goal accomplished"},
+            "actions": [],
+            "is_done": False,
+            "source": "fallback"
+        }
+
+    return jsonify({"status": "success", "decision": decision})
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"🚀 [SIH26171] Starting Local Agent HTTP Server on http://127.0.0.1:{port}")

@@ -397,6 +397,20 @@ document.addEventListener('DOMContentLoaded', () => {
         renderStepProgress(message.payload);
         break;
 
+      case 'agent_thought':
+        if (message.payload) {
+          const { turn, thought, action } = message.payload;
+          reasoningBox.innerHTML = `
+            <div style="margin-bottom:6px; font-weight:700; color:#7c3aed; display:flex; align-items:center; gap:6px;">
+              <span>🧠 Agent Thought (Turn ${turn})</span>
+            </div>
+            <div style="font-size:12px; line-height:1.4; color:#374151;">${escapeHtml(thought)}</div>
+            ${action ? `<div style="margin-top:6px; font-size:11px; font-weight:600; color:#4f46e5;">Next Action: ${escapeHtml(action)}</div>` : ''}
+          `;
+          updateStatus('thinking', `Turn ${turn}: ${thought.slice(0, 50)}...`);
+        }
+        break;
+
       case 'transcription':
         if (message.payload?.text) {
           commandInput.value = message.payload.text;

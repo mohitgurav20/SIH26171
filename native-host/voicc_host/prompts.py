@@ -269,7 +269,8 @@ SYSTEM_AUTONOMOUS_AGENT = (
 
 def build_agent_step_prompt(goal: str, page_url: str, page_title: str,
                             elements: list[dict], vlm_summary: str = "",
-                            history: list[dict] | None = None) -> str:
+                            history: list[dict] | None = None,
+                            alerts: list[str] | None = None) -> str:
     """Builds the single-turn prompt for the autonomous agent loop."""
     rendered_els = []
     for el in elements[:60]: # Top 60 candidate interactive elements
@@ -282,14 +283,16 @@ def build_agent_step_prompt(goal: str, page_url: str, page_title: str,
             line += f' "{str(lbl).strip()[:60]}"'
         if val and val != lbl:
             line += f' value="{str(val).strip()[:40]}"'
+        if el.get("disabled") or el.get("aria_disabled"):
+            line += " disabled=true"
         rendered_els.append(line)
     
     rendered_elements_str = "\n".join(rendered_els) if rendered_els else "(No elements found)"
 
     hist_lines = []
     if history:
-        for i, h in enumerate(history[-5:]):
-            hist_lines.append(f"{i+1}. {h.get('action')} on [{h.get('tag_id')}] - {h.get('intent', h.get('reasoning', ''))}")
+        for i, h in enumerate(history[-6:]):
+            hist_lines.append(f"Turn {h.get('turn', i+1)}: Action={h.get('action')} on [{h.get('target')}] Success={h.get('success')} Thought={h.get('thought', '')[:80]}")
     history_str = "\n".join(hist_lines) if hist_lines else "None (first step)"
 
     prompt = (
@@ -300,10 +303,15 @@ def build_agent_step_prompt(goal: str, page_url: str, page_title: str,
     )
     if vlm_summary:
         prompt += f"VISUAL SCREEN CONTEXT (Moondream VLM): {vlm_summary}\n"
+    if alerts and len(alerts) > 0:
+        clean_alerts = [str(a).strip() for a in alerts if str(a).strip()]
+        if clean_alerts:
+            prompt += f"ACTIVE ON-SCREEN ALERTS / ERRORS:\n" + "\n".join(f"- ⚠️ {a}" for a in clean_alerts) + "\n"
+            prompt += "CRITICAL: If an alert indicates the input was rejected or taken (e.g. name already exists), change the input value immediately!\n"
     prompt += (
-        f"INTERACTIVE ELEMENTS ON SCREEN:\n{rendered_elements_str}\n\n"
+        f"\nINTERACTIVE ELEMENTS ON SCREEN:\n{rendered_elements_str}\n\n"
         f"ACTION HISTORY SO FAR:\n{history_str}\n\n"
-        f"Decide the next action(s) to progress towards completing the goal.\n"
+        f"Decide the single best next action (or chained actions) to progress towards completing the goal. Never click a disabled element.\n"
         f"<|im_end|>\n"
         f"<|im_start|>assistant\n"
     )
