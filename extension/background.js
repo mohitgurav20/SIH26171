@@ -1012,157 +1012,9 @@ async function decomposeGoalIntoSteps(query, currentUrl) {
   ];
   for (const [p, r] of PHONETIC) q = q.replace(p, r);
 
-  // ── DYNAMIC ON-DEVICE LLM PLANNER (Zero Hardcoding via Local Ollama qwen2.5:3b) ─
-  // Prompts the local LLM to dynamically understand ANY arbitrary prompt from judges
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-    const resp = await fetch('http://127.0.0.1:5000/api/decompose_goal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: query, current_url: currentUrl }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.status === 'success' && Array.isArray(data.steps) && data.steps.length > 0) {
-        console.log('[SQ] Dynamically generated plan from Local LLM (qwen2.5:3b):', data.steps);
-
-        // ── NORMALIZE LLM STEPS ───────────────────────────────────────────────
-        const fieldMap = {
-          'to': 'to recipients',
-          'recipient': 'to recipients',
-          'recipients': 'to recipients',
-          'subject': 'subject',
-          'body': 'message body',
-          'message': 'message body',
-          'email body': 'message body',
-          'search': 'search box',
-        };
-
-        // ── COLLAPSE GitHub "navigate home + click search + type + click submit"
-        // into a single reliable direct-URL navigation. The LLM's UI-click approach
-        // is fragile because GitHub's React SPA updates the DOM asynchronously.
-        let steps = data.steps.map(s => ({ ...s }));
-
-        // Detect pattern: navigate github.com → click Search → type X → click submit
-        let githubHomeIdx = -1, githubSearchTypeIdx = -1, githubSearchQuery = '';
-        for (let i = 0; i < steps.length; i++) {
-          const s = steps[i];
-          if (s.type === 'navigate' && s.url && (s.url === 'https://github.com' || s.url === 'https://www.github.com')) {
-            githubHomeIdx = i;
-          }
-          if (githubHomeIdx >= 0 && s.type === 'type' && (s.field?.toLowerCase().includes('search') || s.field?.toLowerCase() === 'search') && s.value) {
-            githubSearchTypeIdx = i;
-            githubSearchQuery = s.value;
-          }
-        }
-
-        if (githubHomeIdx >= 0 && githubSearchQuery) {
-          // Replace the navigate+click+type+submit sequence with a single direct URL navigate
-          const directSearchUrl = `https://github.com/search?q=${encodeURIComponent(githubSearchQuery)}&type=repositories`;
-          // Remove everything from githubHomeIdx up to and including the type step and any immediate click after it
-          const endIdx = githubSearchTypeIdx + 1 < steps.length && steps[githubSearchTypeIdx + 1].type === 'click' ? githubSearchTypeIdx + 2 : githubSearchTypeIdx + 1;
-          const collapsed = [
-            {
-              type: 'navigate',
-              url: directSearchUrl,
-              label: `Search GitHub for "${githubSearchQuery}"`,
-              _inspectAfter: true  // flag: pause and highlight top result after this
-            }
-          ];
-          steps.splice(githubHomeIdx, endIdx - githubHomeIdx, ...collapsed);
-          console.log('[SQ] Collapsed GitHub search UI steps → direct URL:', directSearchUrl);
-        }
-
-        // ── FILTER + MAP steps
-        // Track whether we just collapsed a GitHub search (so we can drop the
-        // immediately-following "click top result" step which causes navigation mid-action)
-        const collapsedGithubNavigateIdx = (githubHomeIdx >= 0 && githubSearchQuery) ? githubHomeIdx : -1;
-
-        const normalized = steps
-          .filter((s, idx) => {
-            // Remove spurious "Next" clicks (Gmail compose has no Next button)
-            if (s.type === 'click' && s.target && /^next$/i.test(s.target.trim())) return false;
-            // Remove "submit search" / "press Enter" steps handled by direct URL
-            if (s.type === 'press_key' && s.key === 'Enter' && s.label?.toLowerCase().includes('search')) return false;
-            // Remove any click step immediately after the collapsed GitHub navigate that
-            // targets a "search result" / "top result" / "first result" / "inspect" etc.
-            // These cause navigations that destroy content scripts and freeze the step queue.
-            if (idx === collapsedGithubNavigateIdx + 1 && s.type === 'click') {
-              const t = (s.target || s.label || '').toLowerCase();
-              if (/result|inspect|repo|top|first|open|view/.test(t)) {
-                console.log('[SQ] Filtered out post-search click step (would cause stuck navigation):', s);
-                return false;
-              }
-            }
-            // Broadly filter any step with label containing "inspect top", "top search result", etc.
-            const lbl = (s.label || '').toLowerCase();
-            if (/inspect.*top|top.*search.*result|first.*result|open.*repo/.test(lbl)) {
-              console.log('[SQ] Filtered out inspect/click-result step:', s);
-              return false;
-            }
-            return true;
-          })
-          .map((s, idx) => {
-            const step = { ...s, id: idx, status: 'pending' };
-            if (step.type === 'type' && step.field) {
-              const normalKey = step.field.toLowerCase().trim();
-              step.field = fieldMap[normalKey] || step.field;
-            }
-            // Flag any placeholder body for regeneration
-            if (step.type === 'type' && step.field?.toLowerCase().includes('body') && step.value) {
-              if (step.value.includes('[Repository') || step.value.includes('[link]') || step.value.length < 40) {
-                step._needsEmailBody = true;
-              }
-            }
-            return step;
-          });
-
-        // ── GENERATE REAL EMAIL BODY for flagged steps
-        for (let i = 0; i < normalized.length; i++) {
-          const s = normalized[i];
-          if (s._needsEmailBody) {
-            delete s._needsEmailBody;
-            const recipientStep = normalized.find(x => x.field === 'to recipients');
-            const subjectStep = normalized.find(x => x.field === 'subject');
-            try {
-              const emailResp = await fetch('http://127.0.0.1:5000/api/compose_email', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  recipient: recipientStep?.value || 'the recipient',
-                  subject: subjectStep?.value || query
-                }),
-                signal: AbortSignal.timeout(5000)
-              });
-              if (emailResp.ok) {
-                const emailJson = await emailResp.json();
-                if (emailJson.body) s.value = emailJson.body;
-              }
-            } catch(e) {
-              console.log('[SQ] compose_email fallback:', e.message);
-              // Fallback inline body
-              const recip = normalized.find(x => x.field === 'to recipients')?.value || 'Team';
-              const subj = normalized.find(x => x.field === 'subject')?.value || query;
-              s.value = `Dear ${recip},\n\nI hope this email finds you well. Following our research on GitHub, here are the top findings regarding "${subj}".\n\nKey alternatives identified include AutoGen by Microsoft for multi-agent workflows, LlamaIndex for context-augmented generation, and Haystack by deepset for production-grade NLP pipelines.\n\nPlease let me know if you need further details.\n\nWarm regards,`;
-            }
-          }
-        }
-
-        console.log('[SQ] Final normalized plan:', normalized);
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.log('[Background] Local LLM planner fallback:', err.message);
-  }
-
-  // ── MULTI-STAGE COMPOUND SENTENCE SPLITTING (Fail-safe Backup) ──────────────
+  // ── 1. MULTI-STAGE COMPOUND SENTENCE SPLITTING (High Precision, Zero Hallucination) ─
   // Detect sequential transitions: "Search GitHub ..., then open Gmail ..." or "Search GitHub ... and email ..."
-  const stageSplitter = /\s*(?:,\s*)?(?:then|after\s+that|and\s+then|and\s+after\s+that|later|and\s+later)\s+|\s+and\s+(?=(?:open|go\s+to|navigate\s+to|visit|compose|email|send\s+(?:an?\s+)?email)\b)\s*/i;
+  const stageSplitter = /\s*(?:,\s*)?(?:then|after\s+that|and\s+then|and\s+after\s+that|later|and\s+later)\s+|\s+and\s+(?=(?:email\s+(?:top\s+\d+\s+)?to|email\s+to|compose\s+email|send\s+(?:an?\s+)?email)\b)\s*/i;
   if (stageSplitter.test(q)) {
     const rawStages = q.split(stageSplitter).map(s => s.trim()).filter(Boolean);
     if (rawStages.length > 1) {
@@ -1177,13 +1029,73 @@ async function decomposeGoalIntoSteps(query, currentUrl) {
           currentContext = { ...currentContext, ...res.context };
         }
       }
-      return combinedSteps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+      if (combinedSteps.length > 0) {
+        console.log('[SQ] Multi-stage compound plan resolved:', combinedSteps.map(s => s.label));
+        return combinedSteps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+      }
     }
   }
 
-  // Single-stage processing
+  // ── 2. SINGLE-STAGE KNOWN WORKFLOW HANDLER ────────────────────────────────
   const single = await decomposeSingleStage(q, currentUrl, {});
-  return single.steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+  if (single.steps && single.steps.length > 0) {
+    console.log('[SQ] Single-stage domain plan resolved:', single.steps.map(s => s.label));
+    return single.steps.map((s, idx) => ({ ...s, id: idx, status: 'pending' }));
+  }
+
+  // ── 3. DYNAMIC ON-DEVICE LLM PLANNER (Fallback for Arbitrary Open-Ended Tasks) ─
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const resp = await fetch('http://127.0.0.1:5000/api/decompose_goal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ goal: query, current_url: currentUrl }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.status === 'success' && Array.isArray(data.steps) && data.steps.length > 0) {
+        console.log('[SQ] Dynamically generated plan from Local LLM:', data.steps);
+
+        const fieldMap = {
+          'to': 'to recipients',
+          'recipient': 'to recipients',
+          'recipients': 'to recipients',
+          'subject': 'subject',
+          'body': 'message body',
+          'message': 'message body',
+          'email body': 'message body',
+          'search': 'search box',
+        };
+
+        const normalized = data.steps
+          .filter(s => {
+            if (s.type === 'click' && s.target && /^next$/i.test(s.target.trim())) return false;
+            if (s.type === 'press_key' && s.key === 'Enter' && s.label?.toLowerCase().includes('search')) return false;
+            const lbl = (s.label || '').toLowerCase();
+            if (/inspect.*top|top.*search.*result|first.*result/.test(lbl)) return false;
+            return true;
+          })
+          .map((s, idx) => {
+            const step = { ...s, id: idx, status: 'pending' };
+            if (step.type === 'type' && step.field) {
+              const normalKey = step.field.toLowerCase().trim();
+              step.field = fieldMap[normalKey] || step.field;
+            }
+            return step;
+          });
+
+        if (normalized.length > 0) return normalized;
+      }
+    }
+  } catch (err) {
+    console.log('[Background] Local LLM planner fallback:', err.message);
+  }
+
+  return [];
 }
 
 // ============================================================================
