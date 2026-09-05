@@ -285,7 +285,7 @@ def compose_email():
 
     try:
         resp = ollama_client.generate(
-            role="text",
+            role="draft",
             prompt=prompt,
             options={"temperature": 0.3, "top_p": 0.9}
         )
@@ -444,7 +444,7 @@ def decompose_goal():
 
     try:
         resp = ollama_client.generate(
-            role="text",
+            role="draft",
             prompt=prompt,
             options={"temperature": 0.1, "top_p": 0.9}
         )

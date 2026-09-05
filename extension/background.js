@@ -651,7 +651,7 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
   }
 
   // ── 3. EMAIL / GMAIL COMPOSE WORKFLOW ────────────────────────────────────
-  const isComposeGoal = /\b(?:compose|write|send|draft)\b.*\b(?:mail|email|message|to)\b|\bto\s+[a-zA-Z0-9._\-]+.*(?:subject|suject|sub)\b|\bcompose\s+to\b/i.test(q);
+  const isComposeGoal = /\b(?:compose|write|send|draft|email)\b.*\b(?:mail|email|message|to)\b|\bto\s+[a-zA-Z0-9._\-]+.*(?:subject|suject|sub)\b|\bcompose\s+to\b|\bemail\s+(?:top\s+\d+\s+)?to\b/i.test(q);
   if (isComposeGoal) {
     const isAlreadyOnGmail = currentUrl && (currentUrl.includes('mail.google.com') || currentUrl.includes('gmail.com'));
     if (!isAlreadyOnGmail) {
@@ -662,8 +662,9 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
       steps.push({ type: 'click', target: 'Compose', label: 'Click Compose' });
     }
 
-    // Extract recipient (supports single handle or multi-word names)
-    const toMatch = q.match(/\b(?:to|recipient)\s+([^,\s]+(?:\s+[^,\s]+)?)(?=\s+(?:subject|suject|sub|regarding|about|saying|summarizing)\b|$)/i)
+    // Extract recipient (supports email address with @ or single handle or multi-word names)
+    const toMatch = q.match(/\b(?:to|recipient)\s+([a-zA-Z0-9._\-+]+@[a-zA-Z0-9._\-]+\.[a-zA-Z]{2,})/i)
+                 || q.match(/\b(?:to|recipient)\s+([^,\s]+(?:\s+[^,\s]+)?)(?=\s+(?:subject|suject|sub|regarding|about|saying|summarizing)\b|$)/i)
                  || q.match(/\b(?:to|recipient)\s+([a-zA-Z0-9._\-@]+)/i);
     let recipient = toMatch ? toMatch[1].trim() : null;
     const reservedWords = ['a', 'an', 'the', 'my', 'gmail', 'compose', 'subject', 'suject', 'write', 'send'];
@@ -733,8 +734,12 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
 
     if (rawSite === 'github' || rawSite === 'github.com') {
       const searchUrl = `https://github.com/search?q=${encodeURIComponent(queryTerm)}&type=repositories`;
-      steps.push({ type: 'navigate', url: searchUrl, label: `Search GitHub for "${queryTerm}"` });
-      steps.push({ type: 'click', target: 'first search result', label: 'Inspect top search result' });
+      steps.push({
+        type: 'navigate',
+        url: searchUrl,
+        label: `Search GitHub for "${queryTerm}"`,
+        _inspectAfter: true  // Flag: pause and highlight top results cleanly for 4.5s
+      });
       return { steps, context: { ...context, topic: `${queryTerm} on GitHub` } };
     } else if (rawSite === 'youtube' || rawSite === 'youtube.com') {
       const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(queryTerm)}`;
@@ -1156,8 +1161,8 @@ async function decomposeGoalIntoSteps(query, currentUrl) {
   }
 
   // ── MULTI-STAGE COMPOUND SENTENCE SPLITTING (Fail-safe Backup) ──────────────
-  // Detect sequential transitions: "Search GitHub ..., then open Gmail ..."
-  const stageSplitter = /\s*(?:,\s*)?(?:then|after\s+that|and\s+then|and\s+after\s+that|later|and\s+later)\s+/i;
+  // Detect sequential transitions: "Search GitHub ..., then open Gmail ..." or "Search GitHub ... and email ..."
+  const stageSplitter = /\s*(?:,\s*)?(?:then|after\s+that|and\s+then|and\s+after\s+that|later|and\s+later)\s+|\s+and\s+(?=(?:open|go\s+to|navigate\s+to|visit|compose|email|send\s+(?:an?\s+)?email)\b)\s*/i;
   if (stageSplitter.test(q)) {
     const rawStages = q.split(stageSplitter).map(s => s.trim()).filter(Boolean);
     if (rawStages.length > 1) {
@@ -1206,11 +1211,13 @@ async function runStepQueue(tabId) {
     step.status = 'running';
     broadcastStepProgress();
     activeTask.status = 'navigating';
+    activeTask.navigatingTabId = tabId;
+    activeTask.navigatingUrl = step.url;
     try {
       await chrome.tabs.update(tabId, { url: step.url });
       step.status = 'done';
       // Store _inspectAfter flag so tabs.onUpdated can pause for inspection
-      if (step._inspectAfter) {
+      if (step._inspectAfter || (step.url && step.url.includes('github.com/search'))) {
         activeTask._pendingInspect = true;
       }
       // Execution resumes in tabs.onUpdated
@@ -1345,6 +1352,11 @@ async function runStepQueue(tabId) {
 // ============================================================================
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && activeTask) {
+    // Only react to the specific tab being navigated by the active task
+    if (activeTask.navigatingTabId && activeTask.navigatingTabId !== tabId) {
+      return;
+    }
+
     // If the page failed with DNS / unreachable error (e.g. chrome-error://chromewebdata)
     if (tab.url && (tab.url.startsWith('chrome-error://') || tab.url.includes('chromewebdata'))) {
       console.warn('[SQ] Detected unreachable domain error, falling back to Google Search...');
@@ -1377,12 +1389,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       console.log('[SQ] Tab navigation complete, resuming StepQueue on tab:', tabId, tab.url);
       activeTask.status = 'running';
 
-      // If this is a GitHub search results page with _pendingInspect, pause to show results
-      const isGithubSearch = tab.url && tab.url.includes('github.com/search');
-      const needsInspect = activeTask._pendingInspect;
-      if (isGithubSearch && needsInspect) {
+      // If this is a GitHub search results page, pause to show results cleanly
+      const isGithubSearch = (tab.url && tab.url.includes('github.com/search')) ||
+                             (activeTask.navigatingUrl && activeTask.navigatingUrl.includes('github.com/search'));
+      const needsInspect = activeTask._pendingInspect || isGithubSearch;
+      if (needsInspect) {
         activeTask._pendingInspect = false;
-        broadcastStatus('thinking', '🔍 Analyzing top LangChain alternative repositories on GitHub...');
+        activeTask.status = 'inspecting';
+        broadcastStatus('thinking', '🔍 GitHub search loaded. Analyzing top repositories...');
 
         // Inject a VISUAL-ONLY highlight (no clicks, no navigation) on the top repo cards
         setTimeout(async () => {
@@ -1390,9 +1404,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
             await chrome.scripting.executeScript({
               target: { tabId },
               func: () => {
-                // Highlight top 3 repository cards with a glowing border
+                // Highlight top 3 repository cards with a glowing border and badge
                 const cards = document.querySelectorAll(
-                  '[data-testid="results-list"] .Box-row, .search-result-item, .repo-list-item, li.repo-list-item'
+                  '[data-testid="results-list"] .Box-row, [data-testid="search-result"], .search-result-item, .repo-list-item, li.repo-list-item, div[data-testid="results-list"] > div'
                 );
                 const targets = cards.length > 0 ? Array.from(cards).slice(0, 3)
                   : Array.from(document.querySelectorAll('a[href*="/"] h3')).slice(0, 3).map(h => h.closest('div, li, article') || h);
@@ -1401,33 +1415,45 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
                   if (!el) return;
                   el.style.cssText += `
                     outline: 3px solid #7c3aed !important;
-                    outline-offset: 3px !important;
+                    outline-offset: 4px !important;
                     border-radius: 8px !important;
-                    box-shadow: 0 0 18px rgba(124,58,237,0.55) !important;
+                    box-shadow: 0 0 20px rgba(124,58,237,0.6) !important;
                     transition: all 0.3s ease !important;
-                    animation: pulse-glow 1.2s ease-in-out ${i * 0.15}s infinite !important;
+                    position: relative !important;
                   `;
+                  if (!el.querySelector('.sih-inspect-badge')) {
+                    const badge = document.createElement('div');
+                    badge.className = 'sih-inspect-badge';
+                    badge.textContent = `★ Top Finding #${i + 1}`;
+                    badge.style.cssText = `
+                      position: absolute;
+                      top: -12px;
+                      right: 12px;
+                      background: linear-gradient(135deg, #7c3aed, #4f46e5);
+                      color: #fff;
+                      font-size: 11px;
+                      font-weight: 700;
+                      padding: 2px 10px;
+                      border-radius: 12px;
+                      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                      z-index: 1000;
+                      pointer-events: none;
+                    `;
+                    el.appendChild(badge);
+                  }
                 });
-
-                // Add pulse animation style
-                if (!document.getElementById('agy-inspect-style')) {
-                  const st = document.createElement('style');
-                  st.id = 'agy-inspect-style';
-                  st.textContent = `
-                    @keyframes pulse-glow {
-                      0%,100% { box-shadow: 0 0 12px rgba(124,58,237,0.4); }
-                      50%      { box-shadow: 0 0 28px rgba(124,58,237,0.85); }
-                    }
-                  `;
-                  document.head.appendChild(st);
-                }
               }
             });
           } catch(e) {
             console.log('[SQ] GitHub highlight inject error:', e.message);
           }
-          // 4-second visible pause — judges can read the search results
-          setTimeout(() => runStepQueue(tabId), 4000);
+          // 4.5-second visible pause so judges & user can clearly see and read GitHub search results
+          setTimeout(() => {
+            if (activeTask && activeTask.status === 'inspecting') {
+              activeTask.status = 'running';
+              runStepQueue(tabId);
+            }
+          }, 4500);
         }, 1200);
         return;
       }
