@@ -653,11 +653,13 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
   // ── 3. EMAIL / GMAIL COMPOSE WORKFLOW ────────────────────────────────────
   const isComposeGoal = /\b(?:compose|write|send|draft|email)\b.*\b(?:mail|email|message|to)\b|\bto\s+[a-zA-Z0-9._\-]+.*(?:subject|suject|sub)\b|\bcompose\s+to\b|\bemail\s+(?:top\s+\d+\s+)?to\b/i.test(q);
   if (isComposeGoal) {
-    const isAlreadyOnGmail = currentUrl && (currentUrl.includes('mail.google.com') || currentUrl.includes('gmail.com'));
+    const isExplicitOpenGmail = /\b(?:open|go\s+to|visit|launch)\s+(?:the\s+)?(?:gmail|google\s*mail)\b/i.test(q);
+    const hasPriorNavigation = context.hasNavigated || (context.topic && context.topic.includes('GitHub'));
+    const isAlreadyOnGmail = !hasPriorNavigation && !isExplicitOpenGmail && currentUrl && (currentUrl.includes('mail.google.com') || currentUrl.includes('gmail.com'));
     if (!isAlreadyOnGmail) {
       steps.push({ type: 'navigate', url: 'https://mail.google.com', label: 'Open Gmail' });
     }
-    const isAlreadyInCompose = currentUrl && currentUrl.includes('compose=new');
+    const isAlreadyInCompose = !hasPriorNavigation && currentUrl && currentUrl.includes('compose=new');
     if (!isAlreadyInCompose) {
       steps.push({ type: 'click', target: 'Compose', label: 'Click Compose' });
     }
@@ -723,16 +725,21 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
     return { steps, context };
   }
 
-  // ── 4. SITE-SPECIFIC SEARCH WORKFLOW (e.g. "search github for langchain alternatives") ──
-  const siteSearchMatch = q.match(/^(?:search(?:\s+for)?|find)\s+(?:the\s+)?([a-zA-Z0-9_\-\.]+)\s+for\s+(.+)$/i);
-  const searchOnSiteMatch = q.match(/^(?:search(?:\s+for)?|find)\s+(.+?)\s+(?:on|in)\s+([a-zA-Z0-9_\-\.]+)$/i);
+  // ── 4. SITE-SPECIFIC SEARCH WORKFLOW (e.g. "search github for ...", "github for ...") ──
+  const isGithubSearchIntent = /\b(?:github|git\s*hub)\b/i.test(q) &&
+                               (/\b(?:search|find|look|for|alternatives|repo|repositories)\b/i.test(q) || !q.includes('create'));
 
-  if (siteSearchMatch || searchOnSiteMatch) {
-    const rawSite = (siteSearchMatch ? siteSearchMatch[1] : searchOnSiteMatch[2]).toLowerCase().trim();
-    let queryTerm = (siteSearchMatch ? siteSearchMatch[2] : searchOnSiteMatch[1]).trim();
-    queryTerm = queryTerm.replace(/\s+(?:and\s+then|then|after\s+that|and\s+also|and)\s+(?:click|open|select|tap|play|inspect|summarize)\s+.*$/i, '').trim();
+  if (isGithubSearchIntent) {
+    let queryTerm = q
+      .replace(/^(?:open|go\s+to|visit)\s+(?:the\s+)?(?:github|git\s*hub)\s*(?:and\s+then|and|,)?\s*/i, '')
+      .replace(/^(?:search(?:\s+for)?|find|look(?:\s+up)?)(?:\s+(?:on|in|at|for))?\s*(?:the\s+)?(?:github|git\s*hub)\s*(?:for|about)?\s*/i, '')
+      .replace(/^(?:the\s+)?(?:github|git\s*hub)\s*(?:search(?:\s+for)?|for)?\s*/i, '')
+      .replace(/\s+(?:on|in|at|from)\s+(?:the\s+)?(?:github|git\s*hub).*$/i, '')
+      .replace(/\s+(?:and\s+then|then|after\s+that|and\s+also|and)\s+(?:click|open|select|tap|play|inspect|summarize)\s+.*$/i, '')
+      .replace(/^(?:search(?:\s+for)?|find|look(?:\s+up)?)\s+/i, '')
+      .trim();
 
-    if (rawSite === 'github' || rawSite === 'github.com') {
+    if (queryTerm) {
       const searchUrl = `https://github.com/search?q=${encodeURIComponent(queryTerm)}&type=repositories`;
       steps.push({
         type: 'navigate',
@@ -741,7 +748,18 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
         _inspectAfter: true  // Flag: pause and highlight top results cleanly for 4.5s
       });
       return { steps, context: { ...context, topic: `${queryTerm} on GitHub` } };
-    } else if (rawSite === 'youtube' || rawSite === 'youtube.com') {
+    }
+  }
+
+  const siteSearchMatch = q.match(/^(?:search(?:\s+for)?|find)\s+(?:the\s+)?([a-zA-Z0-9_\-\.]+)\s+for\s+(.+)$/i);
+  const searchOnSiteMatch = q.match(/^(?:search(?:\s+for)?|find)\s+(.+?)\s+(?:on|in)\s+([a-zA-Z0-9_\-\.]+)$/i);
+
+  if (siteSearchMatch || searchOnSiteMatch) {
+    const rawSite = (siteSearchMatch ? siteSearchMatch[1] : searchOnSiteMatch[2]).toLowerCase().trim();
+    let queryTerm = (siteSearchMatch ? siteSearchMatch[2] : searchOnSiteMatch[1]).trim();
+    queryTerm = queryTerm.replace(/\s+(?:and\s+then|then|after\s+that|and\s+also|and)\s+(?:click|open|select|tap|play|inspect|summarize)\s+.*$/i, '').trim();
+
+    if (rawSite === 'youtube' || rawSite === 'youtube.com') {
       const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(queryTerm)}`;
       steps.push({ type: 'navigate', url: searchUrl, label: `Search YouTube for "${queryTerm}"` });
       steps.push({ type: 'click', target: 'first search result', label: 'Click top search result' });
@@ -1105,9 +1123,15 @@ async function decomposeGoalIntoSteps(query, currentUrl) {
 // ============================================================================
 async function runStepQueue(tabId) {
   if (!activeTask || activeTask.status === 'done') return;
+  if (activeTask._isExecuting) {
+    console.log('[SQ] runStepQueue already executing a step, skipping concurrent invocation');
+    return;
+  }
+  activeTask._isExecuting = true;
 
   const pendingSteps = activeTask.steps.filter(s => s.status === 'pending');
   if (pendingSteps.length === 0) {
+    activeTask._isExecuting = false;
     activeTask.status = 'done';
     broadcastStatus('online', `✓ Goal completed: ${activeTask.goal.slice(0, 60)}`);
     broadcastStepProgress();
@@ -1128,6 +1152,7 @@ async function runStepQueue(tabId) {
     try {
       await chrome.tabs.update(tabId, { url: step.url });
       step.status = 'done';
+      broadcastStepProgress(); // Immediately update UI so navigate step does not stay stuck in RUNNING
       // Store _inspectAfter flag so tabs.onUpdated can pause for inspection
       if (step._inspectAfter || (step.url && step.url.includes('github.com/search'))) {
         activeTask._pendingInspect = true;
@@ -1135,7 +1160,10 @@ async function runStepQueue(tabId) {
       // Execution resumes in tabs.onUpdated
     } catch (err) {
       step.status = 'failed';
+      broadcastStepProgress();
       broadcastStatus('error', `Navigation failed: ${err.message}`);
+    } finally {
+      activeTask._isExecuting = false;
     }
     return;
   }
@@ -1172,6 +1200,7 @@ async function runStepQueue(tabId) {
     if (step._retries <= 10) {
       console.log(`[SQ] Element for step "${step.label}" not ready yet in DOM, retrying (${step._retries}/10)...`);
       broadcastStatus('thinking', `Waiting for "${step.label}"... (${step._retries}/10)`);
+      activeTask._isExecuting = false;
       setTimeout(() => runStepQueue(targetTabId), 600);
       return;
     }
@@ -1239,6 +1268,7 @@ async function runStepQueue(tabId) {
     }
 
     await new Promise(r => setTimeout(r, waitMs));
+    activeTask._isExecuting = false;
     runStepQueue(targetTabId);
   } catch (err) {
     const isConnErr = err.message && (err.message.includes('Could not establish connection') || err.message.includes('Receiving end does not exist'));
@@ -1251,11 +1281,14 @@ async function runStepQueue(tabId) {
           await chrome.scripting.executeScript({ target: { tabId: targetTabId }, files: ['pii_detector.js', 'content.js'] });
         } catch (injErr) {}
         await new Promise(r => setTimeout(r, 800));
+        activeTask._isExecuting = false;
         return runStepQueue(targetTabId);
       }
     }
     step.status = 'failed';
+    broadcastStepProgress();
     broadcastStatus('error', `Step failed: ${err.message}`);
+    activeTask._isExecuting = false;
   }
 }
 
@@ -1363,6 +1396,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           setTimeout(() => {
             if (activeTask && activeTask.status === 'inspecting') {
               activeTask.status = 'running';
+              activeTask._isExecuting = false;
               runStepQueue(tabId);
             }
           }, 4500);
@@ -1371,7 +1405,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       }
 
       setTimeout(() => {
-        runStepQueue(tabId);
+        if (activeTask) {
+          activeTask.status = 'running';
+          activeTask._isExecuting = false;
+          runStepQueue(tabId);
+        }
       }, 1000);
     }
   }
