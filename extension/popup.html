@@ -127,23 +127,27 @@
         <div id="plan-steps-list" class="steps-list"></div>
       </div>
 
-      <!-- Email Sent Confirmation Toast (auto-hides after 4s) -->
-      <div id="generated-artifact-card" style="display:none; align-items:center; gap:8px;
-           background:linear-gradient(135deg,#d1fae5,#a7f3d0); border:1px solid #34d399;
-           border-radius:10px; padding:10px 14px; margin:6px 0; font-size:11.5px; color:#065f46;
-           font-weight:600; animation: fadeSlideIn 0.3s ease;">
-        <span style="font-size:16px;">✅</span>
-        <div style="flex:1; min-width:0;">
-          <div id="artifact-sent-label" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
-          <div style="font-weight:400; opacity:0.8; font-size:10.5px; margin-top:2px;">Email composed &amp; sent via Gmail</div>
+      <!-- Persistent Generated Email / Artifact Card -->
+      <div id="generated-artifact-card" style="display:none; flex-direction:column; gap:8px;
+           background:#ffffff; border:1.5px solid #10b981; border-radius:12px; padding:12px 14px;
+           margin:10px 0; box-shadow:0 4px 14px rgba(16,185,129,0.15); animation:fadeSlideIn 0.3s ease;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; align-items:center; gap:6px; font-weight:700; font-size:12px; color:#065f46;">
+            <span>✉️</span>
+            <span id="artifact-sent-label">Email Composed in Gmail</span>
+          </div>
         </div>
-        <button id="copy-artifact-btn" title="Copy body"
-          style="background:#059669;color:#fff;border:none;border-radius:6px;padding:3px 8px;
-                 font-size:10px;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
-        <!-- Hidden store for copy functionality -->
-        <span id="artifact-content" style="display:none"></span>
-        <span id="artifact-recipient" style="display:none"></span>
-        <span id="artifact-subject" style="display:none"></span>
+        
+        <div style="background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:6px 10px; font-size:11px;">
+          <div style="margin-bottom:3px;"><strong style="color:#374151;">To:</strong> <span id="artifact-recipient" style="color:#2563eb; font-family:monospace;"></span></div>
+          <div><strong style="color:#374151;">Subject:</strong> <span id="artifact-subject" style="color:#111827; font-weight:600;"></span></div>
+        </div>
+
+        <div id="artifact-content" style="max-height:160px; overflow-y:auto; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; font-size:11px; color:#334155; line-height:1.45; white-space:pre-wrap; word-break:break-word;"></div>
+        
+        <div style="font-size:10px; color:#059669; font-weight:500; display:flex; align-items:center; gap:4px;">
+          <span>✓</span> Composed &amp; ready in Gmail
+        </div>
       </div>
     </section>
 

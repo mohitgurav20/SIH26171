@@ -563,18 +563,26 @@
         tracker.setValue(prevVal);
       }
 
-      // Try execCommand for native input insertion
-      try {
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, text);
-      } catch(e) {}
+      // ONLY use document.execCommand if document.activeElement is ACTUALLY this element!
+      // This prevents execCommand from accidentally typing into an earlier field (like "To" recipient box)
+      if (document.activeElement === element) {
+        try {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
+        } catch(e) {}
+      }
 
       element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       try {
         element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
       } catch(e) {}
       element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-      element.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
+
+      // On Gmail, do not fire blur on subject or body as it causes editor reset
+      const isGmail = window.location.hostname.includes('google') || window.location.hostname.includes('gmail');
+      if (!isGmail) {
+        element.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
+      }
 
       // Check for Ace Editor (used on Programiz, LeetCode, CodeChef, etc.)
       const aceContainer = element.closest('.ace_editor') || document.querySelector('.ace_editor');
@@ -622,7 +630,13 @@
         return safe ? `<div>${safe}</div>` : `<div><br></div>`;
       }).join('');
 
+      // Assign rich HTML paragraphs directly into the message body
       targetEditable.innerHTML = htmlContent;
+
+      // Dispatch comprehensive input events so Gmail draft engine commits the text
+      targetEditable.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+      targetEditable.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      targetEditable.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
 
       if (!targetEditable.innerText || targetEditable.innerText.trim().length === 0) {
         targetEditable.innerText = text;
@@ -632,7 +646,7 @@
       targetEditable.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
       targetEditable.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       targetEditable.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-      targetEditable.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
+      // Keep focused, DO NOT blur (blur resets Gmail Closure editor state)
     }
 
     await sleep(200);
@@ -807,12 +821,11 @@
       }
     }
 
+    const composeDialog = document.querySelector('div[role="dialog"], div.AD, table.Ao') || document;
+
     if (rawTarget.includes('recipient') || rawTarget.includes('to')) {
-      const toInput = document.querySelector('input[aria-label*="To"], input.agP, [aria-label*="recipients"], textarea[name="to"], input[name="to"], input[peoplekit-id], div[aria-label*="To"] input, td.Ao input, div[role="dialog"] input[role="combobox"]')
-        || Array.from(document.querySelectorAll('input, textarea')).find(el => {
-             const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || '').toLowerCase();
-             return (lbl.includes('to') || lbl.includes('recipient')) && !lbl.includes('search');
-           });
+      const toInput = composeDialog.querySelector('input[name="to"], input[peoplekit-id], input[aria-label*="To" i], [role="combobox"] input, td.Ao input')
+        || document.querySelector('input[name="to"], input[peoplekit-id], input[aria-label*="To" i]');
       if (toInput) {
         console.log('[Content] Matched recipient input via direct selector:', toInput);
         return toInput;
@@ -820,11 +833,8 @@
     }
 
     if (rawTarget.includes('subject')) {
-      const subjInput = document.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"], input[aria-label*="subject"], div[role="dialog"] input[name="subjectbox"]')
-        || Array.from(document.querySelectorAll('input')).find(el => {
-             const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || '').toLowerCase();
-             return lbl.includes('subject');
-           });
+      const subjInput = composeDialog.querySelector('input[name="subjectbox"], input[placeholder*="Subject" i], input[aria-label*="Subject" i], input.aoT')
+        || document.querySelector('input[name="subjectbox"], input[placeholder*="Subject" i], input[aria-label*="Subject" i]');
       if (subjInput) {
         console.log('[Content] Matched subject input via direct selector:', subjInput);
         return subjInput;
@@ -832,11 +842,9 @@
     }
 
     if (rawTarget.includes('body') || rawTarget.includes('message') || rawTarget.includes('content') || rawTarget.includes('text')) {
-      const bodyInput = document.querySelector('div[aria-label="Message Body"], div[role="textbox"][g_editable="true"], div.editable, div[aria-label*="Message Body"], div[contenteditable="true"]')
-        || Array.from(document.querySelectorAll('div[contenteditable="true"], textarea')).find(el => {
-             const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || '').toLowerCase();
-             return lbl.includes('body') || lbl.includes('message') || el.isContentEditable;
-           });
+      const bodyInput = composeDialog.querySelector('div[role="textbox"][contenteditable="true"], div[aria-label*="Message Body" i], div[aria-label*="Message text" i], div[role="textbox"], div[g_editable="true"]')
+        || composeDialog.querySelector('div[contenteditable="true"]')
+        || document.querySelector('div[role="dialog"] div[contenteditable="true"]');
       if (bodyInput) {
         console.log('[Content] Matched message body via direct selector:', bodyInput);
         return bodyInput;
@@ -1045,19 +1053,40 @@
         }
       }
 
-      // High-accuracy live Gmail Compose element resolution
+      // High-accuracy live Gmail Compose element resolution (dialog-scoped to prevent hitting background inbox)
       const isGmail = window.location.hostname.includes('google') || window.location.hostname.includes('gmail');
       if (isGmail && (step.action === 'type' || step.action === 'click')) {
         const desc = (step.description || '').toLowerCase();
-        if (desc.includes('body') || desc.includes('message')) {
-          const bodyEl = document.querySelector('div[aria-label="Message Body"], div[aria-label*="Message Body"], div[role="textbox"][g_editable="true"], div.editable[contenteditable="true"]');
-          if (bodyEl) targetNode = bodyEl;
-        } else if (desc.includes('recipient') || desc.includes('to')) {
-          const toEl = document.querySelector('input[aria-label*="To"], input.agP, [aria-label*="recipients"], input[name="to"], div[role="dialog"] input[role="combobox"]');
+        const field = (step.field || '').toLowerCase();
+        const isSubject = desc.includes('subject') || field.includes('subject');
+        const isBody = desc.includes('body') || desc.includes('message') || field.includes('body') || field.includes('message');
+        const isRecipient = !isSubject && !isBody && (desc.includes('recipient') || desc.includes('to') || field.includes('recipient') || field.includes('to'));
+
+        // Locate the active Compose dialog (topmost modal in front of user)
+        const dialogs = Array.from(document.querySelectorAll('div[role="dialog"], div.AD, table.Ao'));
+        const composeDialog = dialogs.reverse().find(d => {
+          return d.querySelector('input[name="subjectbox"], input[placeholder*="Subject" i], div[aria-label*="Message" i], div[role="textbox"]') !== null;
+        }) || document.querySelector('div[role="dialog"]') || document;
+
+        if (isBody) {
+          const bodyEl = composeDialog.querySelector('div[role="textbox"][contenteditable="true"], div[aria-label*="Message Body" i], div[aria-label*="Message text" i], div[role="textbox"], div[g_editable="true"]')
+                      || composeDialog.querySelector('div[contenteditable="true"]')
+                      || document.querySelector('div[role="dialog"] div[contenteditable="true"]');
+          if (bodyEl) {
+            targetNode = bodyEl;
+            try { bodyEl.click(); bodyEl.focus(); } catch(e) {}
+          }
+        } else if (isSubject) {
+          const subjEl = composeDialog.querySelector('input[name="subjectbox"], input[placeholder*="Subject" i], input[aria-label*="Subject" i], input.aoT')
+                      || document.querySelector('input[name="subjectbox"], input[placeholder*="Subject" i]');
+          if (subjEl) {
+            targetNode = subjEl;
+            try { subjEl.click(); subjEl.focus(); } catch(e) {}
+          }
+        } else if (isRecipient) {
+          const toEl = composeDialog.querySelector('input[name="to"], input[peoplekit-id], input[aria-label*="To" i], [role="combobox"] input, td.Ao input')
+                    || document.querySelector('input[name="to"], input[peoplekit-id], input[aria-label*="To" i]');
           if (toEl) targetNode = toEl;
-        } else if (desc.includes('subject')) {
-          const subjEl = document.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"]');
-          if (subjEl) targetNode = subjEl;
         } else if (desc.includes('compose')) {
           const composeEl = document.querySelector('div[gh="cm"], .T-I-KE, [data-tooltip="Compose"], [aria-label="Compose"], [aria-label*="Compose"]');
           if (composeEl) targetNode = composeEl;
@@ -1136,24 +1165,29 @@
             // Synthetic KeyboardEvent('Enter') does NOT trigger browser default form submission.
             // Actively locate and tap the search icon / submit button or trigger form.requestSubmit().
             if (keyName === 'Enter') {
-              const form = (target && target.tagName === 'FORM') ? target : (target.form || target.closest?.('form'));
-              let submitBtn = form?.querySelector?.('#nav-search-submit-button, input[type="submit"], button[type="submit"], button[aria-label*="search" i], .nav-search-submit, button:has(svg)');
-              if (!submitBtn) {
-                submitBtn = document.querySelector('#nav-search-submit-button, input#nav-search-submit-button, button#search-icon-legacy, input[name="btnK"], form input[type="submit"], form button[type="submit"], button[aria-label*="search" i], .search-btn, .search-button, button.nav-search-submit');
-              }
+              const isEmailPage = window.location.hostname.includes('mail.google.com') ||
+                                  window.location.hostname.includes('gmail.com') ||
+                                  (target && target.closest && (target.closest('[role="dialog"]') || target.closest('div[aria-label*="Compose" i]')));
+              if (!isEmailPage) {
+                const form = (target && target.tagName === 'FORM') ? target : (target.form || target.closest?.('form'));
+                let submitBtn = form?.querySelector?.('#nav-search-submit-button, input[type="submit"], button[type="submit"], button[aria-label*="search" i], .nav-search-submit, button:has(svg)');
+                if (!submitBtn) {
+                  submitBtn = document.querySelector('#nav-search-submit-button, input#nav-search-submit-button, button#search-icon-legacy, input[name="btnK"], form input[type="submit"], form button[type="submit"], button[aria-label*="search" i], .search-btn, .search-button, button.nav-search-submit');
+                }
 
-              if (submitBtn) {
-                console.log('[Content] Tapping search icon / submit button on Enter:', submitBtn);
-                await simulateClick(submitBtn);
-              } else if (form) {
-                try {
-                  if (typeof form.requestSubmit === 'function') {
-                    form.requestSubmit();
-                  } else {
-                    form.submit();
+                if (submitBtn) {
+                  console.log('[Content] Tapping search icon / submit button on Enter:', submitBtn);
+                  await simulateClick(submitBtn);
+                } else if (form) {
+                  try {
+                    if (typeof form.requestSubmit === 'function') {
+                      form.requestSubmit();
+                    } else {
+                      form.submit();
+                    }
+                  } catch(e) {
+                    try { form.submit(); } catch(ex) {}
                   }
-                } catch(e) {
-                  try { form.submit(); } catch(ex) {}
                 }
               }
             }

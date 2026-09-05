@@ -143,23 +143,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Artifact Card Elements
   const artifactCard = document.getElementById('generated-artifact-card');
-  const copyArtifactBtn = document.getElementById('copy-artifact-btn');
   const auditLogModal = document.getElementById('audit-log-modal');
   const auditLogContent = document.getElementById('audit-log-content');
   const auditModalCloseBtn = document.getElementById('audit-modal-close-btn');
-
-  // Note: artifact toast is NOT restored on popup open — it only shows live during task execution
-
-  if (copyArtifactBtn) {
-    copyArtifactBtn.addEventListener('click', () => {
-      const content = document.getElementById('artifact-content')?.textContent;
-      if (content) {
-        navigator.clipboard.writeText(content);
-        copyArtifactBtn.textContent = 'Copied! ✓';
-        setTimeout(() => copyArtifactBtn.textContent = 'Copy', 1500);
-      }
-    });
-  }
 
   // Event Listener: Open Audit Log History Modal
   verifyLogBtn.addEventListener('click', () => {
@@ -460,27 +446,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (recipientEl) recipientEl.textContent = payload.recipient || '';
     if (subjectEl) subjectEl.textContent = payload.subject || '';
 
-    // Show toast label: "Email sent to tech-lead@company.com"
+    // Update label
     if (sentLabel) {
-      const to = payload.recipient || 'recipient';
-      const subj = payload.subject ? ` — "${payload.subject}"` : '';
-      sentLabel.textContent = `Email sent to ${to}${subj}`;
+      sentLabel.textContent = `Composed in Gmail`;
     }
 
-    // Show the toast
+    // Show the card persistently so user and judges can read & verify the email
     card.style.display = 'flex';
-
-    // Auto-hide after 5 seconds
-    if (card._hideTimer) clearTimeout(card._hideTimer);
-    card._hideTimer = setTimeout(() => {
-      card.style.transition = 'opacity 0.5s ease';
-      card.style.opacity = '0';
-      setTimeout(() => {
-        card.style.display = 'none';
-        card.style.opacity = '1';
-        card.style.transition = '';
-      }, 500);
-    }, 5000);
+    card.style.opacity = '1';
 
     // Save to audit history silently
     try {

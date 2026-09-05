@@ -270,49 +270,44 @@ def compose_email():
     data = request.get_json(force=True) or {}
     recipient = str(data.get("recipient") or "there").strip()
     subject = str(data.get("subject") or "").strip()
+    goal = str(data.get("goal") or "").strip()
+    topic = str(data.get("topic") or subject or goal).strip()
+
+    salutation_name = recipient.split("@")[0].replace(".", " ").replace("_", " ").title() if "@" in recipient else recipient.title()
 
     prompt = (
-        f"You are an intelligent email writing assistant. Write a short, polite, formal email message.\n"
+        f"You are an intelligent AI assistant writing a clear, polite, and professional email message.\n"
         f"Recipient: {recipient}\n"
-        f"Subject / Topic: {subject}\n"
+        f"Subject: {subject}\n"
+        f"Topic / Context: {topic}\n\n"
         f"Rules:\n"
-        f"1. Start with a formal greeting like 'Dear {recipient.title()},'.\n"
-        f"2. Write 2-3 concise, well-written sentences summarizing the key details or findings.\n"
-        f"3. If the topic mentions alternatives or tools (like LangChain), highlight top options (such as AutoGen, LlamaIndex, and Haystack).\n"
-        f"4. Sign off politely with 'Warm regards,'.\n"
-        f"5. Do NOT output a subject line. Only output the email body text."
+        f"1. Begin with a formal greeting: 'Dear {salutation_name},'.\n"
+        f"2. Write 2-3 concise, well-structured paragraphs providing informative details and summarizing key findings regarding '{topic}'.\n"
+        f"3. If the topic asks for alternatives, tools, or options, present the top 3 with numbered bullet points and brief descriptions.\n"
+        f"4. Sign off with 'Warm regards,\nAero Agent'.\n"
+        f"5. Output ONLY the email body text. Do NOT include any Subject header or markdown fences."
     )
 
-    if "langchain" in subject.lower() or "langchain" in str(data).lower():
-        body = (
-            f"Dear {recipient.title()},\n\n"
-            "I hope this message finds you well. I am writing to provide you with a list of top alternatives and tools for LangChain, focusing on the latest developments and features based on our GitHub analysis:\n\n"
-            "1. AutoGen: Multi-agent conversation framework that enables building next-generation LLM applications with autonomous, collaborative agents.\n"
-            "2. LlamaIndex: Leading data framework to ingest, structure, and retrieve private and enterprise data for large-scale LLM processing.\n"
-            "3. Haystack: Production-ready orchestration framework for building scalable search systems and advanced RAG pipelines.\n\n"
-            "I hope this list helps you in evaluating the best architecture and tooling options. If you have any questions or need further assistance, please don't hesitate to contact me.\n\n"
-            "Warm regards,\n"
-            "Aero Agent"
-        )
-        return jsonify({"status": "success", "body": body})
-
-    try:
-        resp = ollama_client.generate(
-            role="draft",
-            prompt=prompt,
-            options={"temperature": 0.3, "top_p": 0.9}
-        )
-        body = resp.text.strip()
-        import re
-        body = re.sub(r"^(?:Subject|Re):\s*[^\n]+\n+", "", body, flags=re.IGNORECASE).strip()
-        log.info("Synthesized email body for '%s' to '%s'", subject, recipient)
-        return jsonify({"status": "success", "body": body})
-    except Exception as e:
-        log.warning("Ollama email composition failed: %s", e)
+    resp = None
+    for role in ("text", "draft"):
+        try:
+            resp = ollama_client.generate(
+                role=role,
+                prompt=prompt,
+                options={"temperature": 0.3, "top_p": 0.9}
+            )
+            if resp and resp.text:
+                body = resp.text.strip()
+                import re
+                body = re.sub(r"^(?:Subject|Re):\s*[^\n]+\n+", "", body, flags=re.IGNORECASE).strip()
+                log.info("LLM dynamically synthesized email body using role '%s' for '%s' to '%s'", role, topic, recipient)
+                return jsonify({"status": "success", "body": body, "source": f"llm-{role}"})
+        except Exception as e:
+            log.warning("Ollama email composition role '%s' failed: %s", role, e)
         fallback = (
-            f"Dear {recipient.title()},\n\n"
-            f"I hope this message finds you well. I explored top findings regarding {subject}. "
-            f"Key alternatives identified include AutoGen, LlamaIndex, and Haystack for autonomous LLM systems.\n\n"
+            f"Dear {salutation_name},\n\n"
+            f"I hope this message finds you well. I explored top findings and details regarding {topic}.\n\n"
+            f"Please let me know if you need any further evaluation or assistance.\n\n"
             f"Warm regards,\n"
             f"Aero Agent"
         )

@@ -555,6 +555,7 @@ function stepSelect(field, value, label) {
 // ============================================================================
 
 async function decomposeSingleStage(q, currentUrl, context = {}) {
+  q = (q || '').replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
   const steps = [];
 
   // ── 1. GITHUB REPO CREATION WORKFLOW ──────────────────────────────────────
@@ -658,7 +659,7 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
     const hasPriorNavigation = context.hasNavigated || (context.topic && context.topic.includes('GitHub'));
     const isAlreadyOnGmail = !hasPriorNavigation && !isExplicitOpenGmail && currentUrl && (currentUrl.includes('mail.google.com') || currentUrl.includes('gmail.com'));
     if (!isAlreadyOnGmail) {
-      steps.push({ type: 'navigate', url: 'https://mail.google.com', label: 'Open Gmail' });
+      steps.push({ type: 'navigate', url: 'https://mail.google.com/mail/u/0/#inbox?compose=new', label: 'Open Gmail & Launch Compose' });
     }
     const isAlreadyInCompose = !hasPriorNavigation && currentUrl && currentUrl.includes('compose=new');
     if (!isAlreadyInCompose) {
@@ -683,41 +684,44 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
     let subject = subjMatch ? subjMatch[1].trim() : null;
 
     // Check if subject is generic and context topic exists (e.g. from previous GitHub search stage)
-    if ((!subject || subject.includes('findings') || subject.includes('results')) && context.topic) {
-      subject = `Top ${context.topic}`;
+    if ((!subject || subject.includes('findings') || subject.includes('results') || subject.includes('summarizing')) && context.topic) {
+      const cleanTopic = context.topic.replace(/^(?:search\s+github\s+for|search\s+for)\s*/i, '').replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
+      subject = `Top ${cleanTopic}`;
     }
 
     let cleanSubject = subject;
     if (cleanSubject) {
+      cleanSubject = cleanSubject.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim();
       cleanSubject = cleanSubject.charAt(0).toUpperCase() + cleanSubject.slice(1);
       steps.push({ type: 'type', field: 'subject', value: cleanSubject, label: `Enter subject "${cleanSubject}"` });
     }
 
     // Synthesize intelligent, topic-aware email body message using local AI gateway
     let emailBody = "";
-    const isLangChain = q.toLowerCase().includes('langchain') || (context.topic && context.topic.toLowerCase().includes('langchain'));
-    if (isLangChain) {
-      emailBody = `Dear Tech-Lead@Company.Com,\n\nI hope this message finds you well. I am writing to provide you with a list of top alternatives and tools for LangChain, focusing on the latest developments and features based on our GitHub analysis:\n\n1. AutoGen: Multi-agent conversation framework that enables building next-generation LLM applications with autonomous, collaborative agents.\n2. LlamaIndex: Leading data framework to ingest, structure, and retrieve private and enterprise data for large-scale LLM processing.\n3. Haystack: Production-ready orchestration framework for building scalable search systems and advanced RAG pipelines.\n\nI hope this list helps you in evaluating the best architecture and tooling options. If you have any questions or need further assistance, please don't hesitate to contact me.\n\nWarm regards,\nAero Agent`;
-    } else {
-      try {
-        const resp = await fetch('http://127.0.0.1:5000/api/compose_email', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ recipient: recipient || 'there', subject: subject || context.topic || q }),
-          signal: AbortSignal.timeout(5000)
-        });
-        if (resp.ok) {
-          const json = await resp.json();
-          emailBody = json.body || "";
-        }
-      } catch (e) {
-        console.log('[Background] Fast compose fallback:', e.message);
+    try {
+      const resp = await fetch('http://127.0.0.1:5000/api/compose_email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: recipient || 'there',
+          subject: cleanSubject || subject || context.topic || q,
+          topic: context.topic || subject || q,
+          goal: q
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (resp.ok) {
+        const json = await resp.json();
+        emailBody = json.body || "";
       }
-      if (!emailBody) {
-        const topic = subject || context.topic || 'the requested topic';
-        const salutation = recipient ? recipient.charAt(0).toUpperCase() + recipient.slice(1) : 'there';
-        emailBody = `Dear ${salutation},\n\nI hope this email finds you well. I am writing to you regarding ${topic}.\n\nPlease let me know if you need any further information.\n\nWarm regards,\nAero Agent`;
-      }
+    } catch (e) {
+      console.log('[Background] Local LLM email synthesis fallback:', e.message);
+    }
+
+    if (!emailBody) {
+      const topic = cleanSubject || subject || context.topic || 'the requested topic';
+      const salutation = recipient ? recipient.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'There';
+      emailBody = `Dear ${salutation},\n\nI hope this email finds you well. I explored top findings regarding ${topic}.\n\nPlease let me know if you need any further information or assistance.\n\nWarm regards,\nAero Agent`;
     }
 
     steps.push({
@@ -736,12 +740,16 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
 
   if (isGithubSearchIntent) {
     let queryTerm = q
+      .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
       .replace(/^(?:open|go\s+to|visit)\s+(?:the\s+)?(?:github|git\s*hub)\s*(?:and\s+then|and|,)?\s*/i, '')
       .replace(/^(?:search(?:\s+for)?|find|look(?:\s+up)?)(?:\s+(?:on|in|at|for))?\s*(?:the\s+)?(?:github|git\s*hub)\s*(?:for|about)?\s*/i, '')
       .replace(/^(?:the\s+)?(?:github|git\s*hub)\s*(?:search(?:\s+for)?|for)?\s*/i, '')
+      .replace(/^(?:search\s+github\s+for|search\s+for\s+github|find\s+on\s+github|github\s+for)\s*/i, '')
       .replace(/\s+(?:on|in|at|from)\s+(?:the\s+)?(?:github|git\s*hub).*$/i, '')
       .replace(/\s+(?:and\s+then|then|after\s+that|and\s+also|and)\s+(?:click|open|select|tap|play|inspect|summarize)\s+.*$/i, '')
       .replace(/^(?:search(?:\s+for)?|find|look(?:\s+up)?)\s+/i, '')
+      .replace(/^(?:github\s+for|for\s+github)\s*/i, '')
+      .replace(/^["'“”‘’]+|["'“”‘’]+$/g, '')
       .trim();
 
     if (queryTerm) {
@@ -757,7 +765,8 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
         label: `Search GitHub for "${queryTerm}"`,
         _inspectAfter: true  // Flag: pause and highlight top results cleanly for 4.5s
       });
-      return { steps, context: { ...context, hasNavigated: true, topic: `${queryTerm} on GitHub` } };
+      const displayTopic = `${queryTerm.charAt(0).toUpperCase() + queryTerm.slice(1)} on GitHub`;
+      return { steps, context: { ...context, hasNavigated: true, topic: displayTopic, queryTerm } };
     }
   }
 
@@ -1024,7 +1033,9 @@ async function decomposeSingleStage(q, currentUrl, context = {}) {
 }
 
 async function decomposeGoalIntoSteps(query, currentUrl) {
-  let q = query.toLowerCase().trim();
+  let q = query.trim();
+  // Strip surrounding quotes (double, single, smart quotes)
+  q = q.replace(/^["'“”‘’]+|["'“”‘’]+$/g, '').trim().toLowerCase();
 
   // ── PHONETIC & MULTI-WORD BRAND CORRECTION ─────────────────────────────────
   const PHONETIC = [
@@ -1717,11 +1728,14 @@ function resolveStepToActions(step, elements) {
       if (score > bestScore) { bestScore = score; bestEl = el; }
     }
 
-    if (bestEl && bestScore >= 30) {
-      actions.push({ step: 0, tag_id: bestEl.tag_id, action: 'type', value: step.value, description: step.label });
+    if (step.field.includes('subject') || step.field.includes('body') || step.field.includes('message')) {
+      // Route email subject and body to live dialog resolution in content.js
+      actions.push({ step: 0, tag_id: 0, field: step.field, action: 'type', value: step.value, description: step.label });
+    } else if (bestEl && bestScore >= 30) {
+      actions.push({ step: 0, tag_id: bestEl.tag_id, field: step.field, action: 'type', value: step.value, description: step.label });
     } else {
       // Return tag_id: 0 so content.js uses its live semantic selectors directly on the document!
-      actions.push({ step: 0, tag_id: 0, action: 'type', value: step.value, description: step.label });
+      actions.push({ step: 0, tag_id: 0, field: step.field, action: 'type', value: step.value, description: step.label });
     }
   }
 
