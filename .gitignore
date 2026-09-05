@@ -81,3 +81,9 @@ benchmark_results/
 # ========================
 Desktop.ini
 ehthumbs.db
+
+# ========================
+# Workspace Extras
+# ========================
+Browser-AI-agent/
+scratch_*.py

@@ -141,26 +141,105 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Event Listener: Verify Hash Chain
+  // Artifact Card Elements
+  const artifactCard = document.getElementById('generated-artifact-card');
+  const copyArtifactBtn = document.getElementById('copy-artifact-btn');
+  const auditLogModal = document.getElementById('audit-log-modal');
+  const auditLogContent = document.getElementById('audit-log-content');
+  const auditModalCloseBtn = document.getElementById('audit-modal-close-btn');
+
+  // Note: artifact toast is NOT restored on popup open — it only shows live during task execution
+
+  if (copyArtifactBtn) {
+    copyArtifactBtn.addEventListener('click', () => {
+      const content = document.getElementById('artifact-content')?.textContent;
+      if (content) {
+        navigator.clipboard.writeText(content);
+        copyArtifactBtn.textContent = 'Copied! ✓';
+        setTimeout(() => copyArtifactBtn.textContent = 'Copy', 1500);
+      }
+    });
+  }
+
+  // Event Listener: Open Audit Log History Modal
   verifyLogBtn.addEventListener('click', () => {
-    verifyLogBtn.disabled = true;
-    verifyLogBtn.textContent = 'Verifying...';
     chrome.runtime.sendMessage({ type: 'verify_log' });
 
-    setTimeout(() => {
-      verifyLogBtn.disabled = false;
-      verifyLogBtn.innerHTML = `
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-        Audit Log Verified ✓
+    let history = [];
+    try {
+      history = JSON.parse(localStorage.getItem('audit_history') || '[]');
+    } catch(e) {}
+
+    auditLogContent.innerHTML = '';
+    if (history.length === 0) {
+      auditLogContent.innerHTML = `
+        <div style="background:#fff1f2; border:1px dashed #fecdd3; border-radius:10px; padding:16px 12px; text-align:center; margin:8px 0;">
+          <div style="font-size:20px; margin-bottom:6px;">🛡️</div>
+          <div style="font-weight:600; font-size:12px; color:#be123c; margin-bottom:4px;">No Actions Recorded Yet</div>
+          <div style="font-size:10.5px; color:#6b7280; line-height:1.4;">
+            This is the immutable security audit ledger. Run any task (e.g. search GitHub, open Gmail, summarize articles) to see cryptographic step hashes and execution history here.
+          </div>
+        </div>
       `;
-    }, 600);
+    } else {
+      history.forEach(item => {
+        const entry = document.createElement('div');
+        entry.className = 'audit-log-entry';
+        entry.innerHTML = `
+          <div class="audit-entry-time">${escapeHtml(item.time || '')}</div>
+          <div class="audit-entry-goal">${escapeHtml(item.goal || 'Executed Task')}</div>
+          ${item.recipient ? `<div style="font-size:10px; color:#6b7280;"><strong>To:</strong> ${escapeHtml(item.recipient)}</div>` : ''}
+          ${item.subject ? `<div style="font-size:10px; color:#6b7280;"><strong>Subject:</strong> ${escapeHtml(item.subject)}</div>` : ''}
+          ${item.content ? `<div class="audit-entry-content">${escapeHtml(item.content)}</div>` : ''}
+        `;
+        auditLogContent.appendChild(entry);
+      });
+    }
+    auditLogModal.style.display = 'flex';
+    auditLogModal.classList.remove('hidden');
+  });
+
+  const auditModalXBtn = document.getElementById('audit-modal-x-btn');
+
+  function closeAuditModal(e) {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (auditLogModal) {
+      auditLogModal.classList.add('hidden');
+      auditLogModal.style.display = 'none';
+    }
+  }
+
+  if (auditModalCloseBtn) {
+    auditModalCloseBtn.addEventListener('click', closeAuditModal);
+    auditModalCloseBtn.addEventListener('pointerdown', closeAuditModal);
+  }
+  if (auditModalXBtn) {
+    auditModalXBtn.addEventListener('click', closeAuditModal);
+    auditModalXBtn.addEventListener('pointerdown', closeAuditModal);
+  }
+  if (auditLogModal) {
+    auditLogModal.addEventListener('click', (e) => {
+      if (e.target === auditLogModal) {
+        closeAuditModal(e);
+      }
+    });
+  }
+
+  // Global escape key to close any open modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeAuditModal();
+      if (confirmationModal) confirmationModal.classList.add('hidden');
+    }
   });
 
   // Event Listeners: Confirmation Modal
   modalConfirmBtn.addEventListener('click', () => {
     confirmationModal.classList.add('hidden');
+    confirmationModal.style.display = 'none';
     chrome.runtime.sendMessage({
       type: 'confirm_action',
       payload: { approved: true, id: currentPendingConfirmationId }
@@ -169,6 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   modalRejectBtn.addEventListener('click', () => {
     confirmationModal.classList.add('hidden');
+    confirmationModal.style.display = 'none';
     chrome.runtime.sendMessage({
       type: 'confirm_action',
       payload: { approved: false, id: currentPendingConfirmationId }
@@ -343,8 +423,67 @@ document.addEventListener('DOMContentLoaded', () => {
       case 'confirmation_request':
         showConfirmationModal(message.payload, message.id);
         break;
+
+      case 'artifact_generated':
+        renderArtifactCard(message.payload);
+        break;
     }
   });
+
+  // Render sent-confirmation toast (email goes into Gmail compose directly, no duplicate preview)
+  function renderArtifactCard(payload) {
+    if (!payload) return;
+    const card = document.getElementById('generated-artifact-card');
+    if (!card) return;
+
+    // Populate hidden fields for copy functionality
+    const contentEl = document.getElementById('artifact-content');
+    const recipientEl = document.getElementById('artifact-recipient');
+    const subjectEl = document.getElementById('artifact-subject');
+    const sentLabel = document.getElementById('artifact-sent-label');
+
+    if (contentEl) contentEl.textContent = payload.body || '';
+    if (recipientEl) recipientEl.textContent = payload.recipient || '';
+    if (subjectEl) subjectEl.textContent = payload.subject || '';
+
+    // Show toast label: "Email sent to tech-lead@company.com"
+    if (sentLabel) {
+      const to = payload.recipient || 'recipient';
+      const subj = payload.subject ? ` — "${payload.subject}"` : '';
+      sentLabel.textContent = `Email sent to ${to}${subj}`;
+    }
+
+    // Show the toast
+    card.style.display = 'flex';
+
+    // Auto-hide after 5 seconds
+    if (card._hideTimer) clearTimeout(card._hideTimer);
+    card._hideTimer = setTimeout(() => {
+      card.style.transition = 'opacity 0.5s ease';
+      card.style.opacity = '0';
+      setTimeout(() => {
+        card.style.display = 'none';
+        card.style.opacity = '1';
+        card.style.transition = '';
+      }, 500);
+    }, 5000);
+
+    // Save to audit history silently
+    try {
+      localStorage.setItem('last_artifact', JSON.stringify(payload));
+      const history = JSON.parse(localStorage.getItem('audit_history') || '[]');
+      if (!history.some(h => h.content === payload.body)) {
+        history.unshift({
+          time: new Date().toLocaleTimeString(),
+          goal: payload.goal || 'Generated Content',
+          recipient: payload.recipient,
+          subject: payload.subject,
+          content: payload.body
+        });
+        localStorage.setItem('audit_history', JSON.stringify(history.slice(0, 30)));
+      }
+    } catch(e) {}
+  }
 
   /**
    * Schedule auto-resume listening after task completion (Always-On Mode).
@@ -455,33 +594,31 @@ document.addEventListener('DOMContentLoaded', () => {
       // Trigger speech recognition in active tab
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
         let activeTab = tabs?.[0];
-        const triggerSpeech = (tabId) => {
-          chrome.tabs.sendMessage(tabId, { type: 'start_speech_recognition' }, (res) => {
-            if (chrome.runtime.lastError || !res?.success) {
-              console.log('[Popup] Injecting content script for speech...');
-              chrome.scripting.executeScript({
-                target: { tabId },
-                files: ['content.js']
-              }).then(() => {
-                setTimeout(() => {
-                  chrome.tabs.sendMessage(tabId, { type: 'start_speech_recognition' }).catch(() => startLocalSpeechFallback());
-                }, 100);
-              }).catch(() => startLocalSpeechFallback());
-            }
-          });
-        };
+        const activeUrl = activeTab?.url || '';
+        const isRestricted = activeUrl.startsWith('chrome://') || activeUrl.startsWith('edge://') || activeUrl.startsWith('about:') || activeUrl.startsWith('chrome-extension://');
 
-        if (activeTab?.id) {
-          triggerSpeech(activeTab.id);
-        } else {
-          chrome.tabs.query({ active: true }, (fallbackTabs) => {
-            if (fallbackTabs?.[0]?.id) {
-              triggerSpeech(fallbackTabs[0].id);
-            } else {
-              startLocalSpeechFallback();
-            }
-          });
+        if (isRestricted || !activeTab?.id) {
+          startLocalSpeechFallback();
+          return;
         }
+
+        chrome.tabs.sendMessage(activeTab.id, { type: 'start_speech_recognition' }, (res) => {
+          const err = chrome.runtime.lastError;
+          if (err || !res?.success) {
+            console.log('[Popup] Injecting content script for speech...');
+            chrome.scripting.executeScript({
+              target: { tabId: activeTab.id },
+              files: ['pii_detector.js', 'content.js']
+            }).then(() => {
+              setTimeout(() => {
+                chrome.tabs.sendMessage(activeTab.id, { type: 'start_speech_recognition' }, (res2) => {
+                  const err2 = chrome.runtime.lastError;
+                  if (err2 || !res2?.success) startLocalSpeechFallback();
+                });
+              }, 100);
+            }).catch(() => startLocalSpeechFallback());
+          }
+        });
       });
     } else {
       // Stop recording
@@ -492,15 +629,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (recordingInterval) clearInterval(recordingInterval);
       if (waveAnimInterval) clearInterval(waveAnimInterval);
 
-      // Stop speech recognition across tabs
+      // Stop speech recognition across tabs safely
       chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
-        if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'stop_speech_recognition' }).catch(() => {});
-        }
-      });
-      chrome.tabs.query({ active: true }, (tabs) => {
-        if (tabs[0]?.id) {
-          chrome.tabs.sendMessage(tabs[0].id, { type: 'stop_speech_recognition' }).catch(() => {});
+        const tab = tabs?.[0];
+        const url = tab?.url || '';
+        if (tab?.id && !url.startsWith('chrome://') && !url.startsWith('edge://') && !url.startsWith('about:') && !url.startsWith('chrome-extension://')) {
+          chrome.tabs.sendMessage(tab.id, { type: 'stop_speech_recognition' }, () => {
+            const err = chrome.runtime.lastError;
+          });
         }
       });
       stopLocalSpeechFallback();
@@ -636,14 +772,10 @@ document.addEventListener('DOMContentLoaded', () => {
         planStepsList.appendChild(stepDiv);
       });
       if (actions.some(a => a.action === 'navigate')) {
-        updateStatus('online', 'Task Complete ✓');
-        // Navigate actions resolve instantly — auto-resume for next command
-        if (alwaysOnMode) scheduleAutoResumeListen();
+        // Navigate action queued
       }
     } else {
       planStepsContainer.style.display = 'none';
-      updateStatus('online', alwaysOnMode ? '🎙️ Always Listening...' : 'Agent Ready');
-      if (alwaysOnMode) scheduleAutoResumeListen();
     }
   }
   // Render Step Progress (from StepQueue executor in background.js)
@@ -698,15 +830,13 @@ document.addEventListener('DOMContentLoaded', () => {
       planStepsList.appendChild(stepDiv);
     });
 
-    const allDone = steps.every(s => s.status === 'done' || s.status === 'skipped');
-    if (allDone) {
+    if (payload.isTaskComplete) {
       updateStatus('online', 'Goal Complete ✓');
       if (alwaysOnMode) scheduleAutoResumeListen();
     }
   }
 
   // Update Step Execution Result
-
   function updateStepResult(result) {
     if (!result) return;
     const stepNum = result.step_index;
@@ -718,7 +848,6 @@ document.addEventListener('DOMContentLoaded', () => {
         stepDiv.className = 'step-item done';
         stepBadge.style.color = '#059669';
         stepBadge.textContent = 'Done ✓';
-        updateStatus('online', 'Task Complete ✓');
       } else {
         stepDiv.className = 'step-item';
         stepBadge.style.color = '#ef4444';
@@ -737,6 +866,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div><strong>Confidence:</strong> ${Math.round((payload?.confidence || 0) * 100)}%</div>
       <div><strong>Reason:</strong> ${escapeHtml(payload?.reason || 'Guardrail flagged potentially destructive intent.')}</div>
     `;
+    confirmationModal.style.display = 'flex';
     confirmationModal.classList.remove('hidden');
   }
 
@@ -747,14 +877,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const label = statusIndicator.querySelector('.status-label');
     if (label) {
       if (state === 'thinking') {
-        label.textContent = 'Thinking...';
+        label.textContent = msg ? `🧠 ${msg.slice(0, 45)}` : 'Thinking...';
       } else if (state === 'acting') {
-        label.textContent = 'Executing...';
+        label.textContent = msg ? `⚡ ${msg.slice(0, 45)}` : 'Executing...';
+      } else if (state === 'error') {
+        label.textContent = msg ? `⚠ ${msg.slice(0, 40)}` : 'Error';
       } else {
-        label.textContent = 'Ready';
+        label.textContent = msg ? msg.slice(0, 45) : 'Ready';
       }
     }
+    // Also update reasoning box with live status message
+    if (msg && (state === 'thinking' || state === 'acting') && reasoningBox) {
+      const icon = state === 'acting' ? '👁️' : '🧠';
+      reasoningBox.innerHTML = `<strong>${icon} Agent:</strong> ${escapeHtml(msg)}`;
+    }
   }
+
 
   // Helper: Escape HTML
   function escapeHtml(str) {
@@ -763,6 +901,29 @@ document.addEventListener('DOMContentLoaded', () => {
     div.textContent = str;
     return div.innerHTML;
   }
+
+  // Dynamic Local Gateway Health Polling
+  async function updateServerStatus() {
+    const serverLabel = document.getElementById('server-label');
+    const serverDot = document.getElementById('server-dot');
+    if (!serverLabel || !serverDot) return;
+
+    try {
+      const res = await fetch('http://127.0.0.1:5000/api/health', { signal: AbortSignal.timeout(1800) });
+      if (res.ok) {
+        serverLabel.textContent = 'Server: Connected (5000)';
+        serverDot.style.background = '#10b981'; // Green
+      } else {
+        serverLabel.textContent = 'Server: Standby';
+        serverDot.style.background = '#f59e0b'; // Amber
+      }
+    } catch (e) {
+      serverLabel.textContent = 'Server: Offline (Fast Mode)';
+      serverDot.style.background = '#94a3b8'; // Slate
+    }
+  }
+  setInterval(updateServerStatus, 5000);
+  updateServerStatus();
 
   console.log('[Aero Agent] Popup controller initialized');
 });

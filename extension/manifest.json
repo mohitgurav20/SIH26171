@@ -27,12 +27,15 @@
   "background": {
     "service_worker": "background.js"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:11434 http://localhost:11434 http://127.0.0.1:5000 http://localhost:5000"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true
+      "js": ["pii_detector.js", "content.js"],
+      "run_at": "document_start",
+      "all_frames": false
     }
   ],
   "icons": {
@@ -43,11 +46,23 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["dom-worker.js", "permission.html", "permission.js", "popup.html", "offscreen.html"],
+      "resources": [
+        "dom-worker.js",
+        "pii_detector.js",
+        "pii_redactor.js",
+        "permission.html",
+        "permission.js",
+        "popup.html",
+        "offscreen.html"
+      ],
       "matches": ["<all_urls>"]
     }
   ],
-  "host_permissions": ["<all_urls>"]
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:11434/*",
+    "http://localhost:11434/*",
+    "http://127.0.0.1:5000/*",
+    "http://localhost:5000/*"
+  ]
 }
-
-

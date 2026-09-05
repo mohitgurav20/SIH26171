@@ -240,6 +240,76 @@ def build_verification_prompt(task: str, expected_outcome: str,
     return BuiltPrompt(system=SYSTEM_VERIFY, prefix=prefix, suffix=suffix)
 
 
+SYSTEM_AUTONOMOUS_AGENT = (
+    "You are an autonomous browser agent. Your job is to complete the user's goal by deciding the next web action based on the live screen visual context and interactive elements on the page.\n\n"
+    "Output JSON only in this exact format:\n"
+    "{\n"
+    '  "actions": [\n'
+    '    {"type": "click", "tag_id": 1, "intent": "Click Compose button"},\n'
+    '    {"type": "type", "tag_id": 4, "value": "siddubakka@example.com", "intent": "Type recipient"}\n'
+    "  ],\n"
+    '  "reasoning": "Explain concisely what you are doing and why.",\n'
+    '  "is_done": false\n'
+    "}\n\n"
+    "Action Types:\n"
+    '- "click": click button, link, tab, checkbox, or list item (requires tag_id)\n'
+    '- "type": type text into input or contenteditable area (requires tag_id, value)\n'
+    '- "press_key": send key like Tab or Enter to confirm chip/submission (requires key: "Tab"|"Enter")\n'
+    '- "navigate": go to URL (requires value="https://...")\n'
+    '- "scroll": scroll down/up (requires value="down"|"up")\n'
+    '- "done": the user goal has been completely achieved (tag_id null, is_done true)\n\n'
+    "Rules:\n"
+    "1. Only use tag_id numbers that exist in the ELEMENTS list.\n"
+    "2. For typing, specify the exact text in 'value'.\n"
+    "3. You can chain multiple actions if they are ready (e.g. fill inputs or click buttons).\n"
+    "4. If the goal is completely finished, return actions with type 'done' and set is_done=true.\n"
+    "5. Fields or values labeled [REDACTED_*] or ●●●●●● represent client-side privacy-masked inputs (passwords, PII). Treat them normally and proceed with form submission or navigation."
+)
+
+
+def build_agent_step_prompt(goal: str, page_url: str, page_title: str,
+                            elements: list[dict], vlm_summary: str = "",
+                            history: list[dict] | None = None) -> str:
+    """Builds the single-turn prompt for the autonomous agent loop."""
+    rendered_els = []
+    for el in elements[:60]: # Top 60 candidate interactive elements
+        tag = el.get("tag_id", el.get("id"))
+        role = el.get("role") or el.get("tag", "element")
+        lbl = el.get("aria_label") or el.get("text") or el.get("name") or el.get("placeholder") or ""
+        val = el.get("value", "")
+        line = f"[{tag}] {role}"
+        if lbl:
+            line += f' "{str(lbl).strip()[:60]}"'
+        if val and val != lbl:
+            line += f' value="{str(val).strip()[:40]}"'
+        rendered_els.append(line)
+    
+    rendered_elements_str = "\n".join(rendered_els) if rendered_els else "(No elements found)"
+
+    hist_lines = []
+    if history:
+        for i, h in enumerate(history[-5:]):
+            hist_lines.append(f"{i+1}. {h.get('action')} on [{h.get('tag_id')}] - {h.get('intent', h.get('reasoning', ''))}")
+    history_str = "\n".join(hist_lines) if hist_lines else "None (first step)"
+
+    prompt = (
+        f"<|im_start|>system\n{SYSTEM_AUTONOMOUS_AGENT}\n<|im_end|>\n"
+        f"<|im_start|>user\n"
+        f"GOAL: {goal}\n"
+        f"PAGE: {page_url} ({page_title})\n"
+    )
+    if vlm_summary:
+        prompt += f"VISUAL SCREEN CONTEXT (Moondream VLM): {vlm_summary}\n"
+    prompt += (
+        f"INTERACTIVE ELEMENTS ON SCREEN:\n{rendered_elements_str}\n\n"
+        f"ACTION HISTORY SO FAR:\n{history_str}\n\n"
+        f"Decide the next action(s) to progress towards completing the goal.\n"
+        f"<|im_end|>\n"
+        f"<|im_start|>assistant\n"
+    )
+    return prompt
+
+
 def stable_prefix(prompt: BuiltPrompt) -> str:
     """The bytes that must not change across one task's calls (phase 107)."""
     return f"{prompt.system}\n\n{prompt.prefix}"
@@ -250,4 +320,6 @@ ALL_SYSTEM_PROMPTS = {
     "text": SYSTEM_TEXT,
     "vision": SYSTEM_VISION,
     "verify": SYSTEM_VERIFY,
+    "agent_loop": SYSTEM_AUTONOMOUS_AGENT,
 }
+

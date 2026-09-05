@@ -33,6 +33,18 @@
       </div>
     </header>
 
+    <!-- System Status Badges: Privacy Filter & Local Gateway -->
+    <div class="system-badges-row" style="display: flex; gap: 8px; margin: -6px 0 12px 0; font-size: 11px;">
+      <div id="privacy-badge" class="privacy-pill" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 9999px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; font-weight: 600;">
+        <span>🛡️</span>
+        <span>Privacy Filter: Active</span>
+      </div>
+      <div id="server-badge" class="server-pill" style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 9999px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; font-weight: 600;">
+        <span id="server-dot" style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3b82f6;"></span>
+        <span id="server-label">Server: 127.0.0.1:5000</span>
+      </div>
+    </div>
+
     <!-- Text Input Box -->
     <section class="input-card">
       <div class="input-wrapper">
@@ -114,6 +126,25 @@
         </div>
         <div id="plan-steps-list" class="steps-list"></div>
       </div>
+
+      <!-- Email Sent Confirmation Toast (auto-hides after 4s) -->
+      <div id="generated-artifact-card" style="display:none; align-items:center; gap:8px;
+           background:linear-gradient(135deg,#d1fae5,#a7f3d0); border:1px solid #34d399;
+           border-radius:10px; padding:10px 14px; margin:6px 0; font-size:11.5px; color:#065f46;
+           font-weight:600; animation: fadeSlideIn 0.3s ease;">
+        <span style="font-size:16px;">✅</span>
+        <div style="flex:1; min-width:0;">
+          <div id="artifact-sent-label" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+          <div style="font-weight:400; opacity:0.8; font-size:10.5px; margin-top:2px;">Email composed &amp; sent via Gmail</div>
+        </div>
+        <button id="copy-artifact-btn" title="Copy body"
+          style="background:#059669;color:#fff;border:none;border-radius:6px;padding:3px 8px;
+                 font-size:10px;cursor:pointer;white-space:nowrap;flex-shrink:0;">Copy</button>
+        <!-- Hidden store for copy functionality -->
+        <span id="artifact-content" style="display:none"></span>
+        <span id="artifact-recipient" style="display:none"></span>
+        <span id="artifact-subject" style="display:none"></span>
+      </div>
     </section>
 
     <!-- Action Tools Bar -->
@@ -171,6 +202,25 @@
         <div class="modal-actions">
           <button id="modal-reject-btn" class="btn-cancel">Cancel</button>
           <button id="modal-confirm-btn" class="btn-confirm">Approve</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit Log History Modal -->
+    <div id="audit-log-modal" class="modal-backdrop hidden">
+      <div class="modal-card audit-modal-card">
+        <div class="modal-badge">📋 Cryptographic Execution Audit</div>
+        <div class="audit-modal-header" style="display:flex; justify-content:space-between; align-items:center;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <h3 class="modal-title" style="margin:0;">Task & Action History</h3>
+            <span class="audit-verified-pill">SHA-256 Verified ✓</span>
+          </div>
+          <button id="audit-modal-x-btn" class="modal-x-close" title="Close" style="background:none; border:none; font-size:18px; line-height:1; cursor:pointer; color:#9ca3af; padding:4px 8px; border-radius:6px;">✕</button>
+        </div>
+        <p class="modal-desc">Complete immutable record of goals, URLs visited, queries searched, and generated content.</p>
+        <div id="audit-log-content" class="audit-log-list"></div>
+        <div class="modal-actions">
+          <button id="audit-modal-close-btn" class="btn-confirm" style="width: 100%;">Close History</button>
         </div>
       </div>
     </div>

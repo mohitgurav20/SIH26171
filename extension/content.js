@@ -12,8 +12,7 @@
 (function() {
   'use strict';
 
-  if (window.__SIH26171_CONTENT_INITIALIZED__) return;
-  window.__SIH26171_CONTENT_INITIALIZED__ = true;
+  window.__SIH26171_CONTENT_INITIALIZED__ = Date.now();
 
   // DOM State Cache
   const tagElementMap = new Map();
@@ -23,6 +22,7 @@
   let domWorker = null;
   let mutationDebounceTimer = null;
   const mutatedElementsSet = new Set();
+  let lastInteractedElement = null;
 
   // Initialize Web Worker if possible
   try {
@@ -75,15 +75,21 @@
    */
   function isElementVisible(node, style) {
     if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+    if (style.display === 'none' || style.visibility === 'hidden') {
       return false;
     }
-    if (node.hasAttribute('aria-hidden') && node.getAttribute('aria-hidden') === 'true') {
+
+    // Allow radio/checkbox inputs that use standard sr-only/opacity:0 styling
+    const isRadioOrCheck = node.tagName === 'INPUT' && (node.type === 'radio' || node.type === 'checkbox');
+    if (style.opacity === '0' && !isRadioOrCheck) {
+      return false;
+    }
+    if (node.hasAttribute('aria-hidden') && node.getAttribute('aria-hidden') === 'true' && !isRadioOrCheck) {
       return false;
     }
 
     const rect = node.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return false;
+    if (rect.width === 0 && rect.height === 0 && !isRadioOrCheck) return false;
     if (rect.bottom < -500 || rect.top > (window.innerHeight + 500)) return false;
 
     return true;
@@ -108,6 +114,11 @@
     ]);
 
     if (INTERACTIVE_TAGS.has(tagName)) return true;
+
+    // Direct Gmail Compose button detection
+    if (node.getAttribute('gh') === 'cm' || node.classList?.contains('T-I-KE') || node.getAttribute('data-tooltip')?.toLowerCase() === 'compose') {
+      return true;
+    }
 
     if (tagName === 'IFRAME') {
       const title = (node.getAttribute('title') || node.getAttribute('aria-label') || node.id || node.src || '').toLowerCase();
@@ -136,12 +147,7 @@
   /**
    * Pass 2: Extract semantic attributes & compute coordinates
    */
-  function extractInteractiveElements(forceFull = false) {
-    // If not dirty and cached, return cache (instant response)
-    if (!forceFull && !isDomDirty && cachedDomData) {
-      return cachedDomData;
-    }
-
+  function extractInteractiveElements(forceFull = true) {
     tagElementMap.clear();
 
     const SKIP_TAGS = new Set([
@@ -252,6 +258,10 @@
         item.href = node.getAttribute('href') || null;
       }
 
+      if (node.isContentEditable) {
+        item.is_content_editable = true;
+      }
+
       if (node.tagName === 'SELECT') {
         item.value = node.value || null;
         item.selected_text = node.options?.[node.selectedIndex]?.text || null;
@@ -347,7 +357,7 @@
     if (!element) return;
 
     // Find clickable parent if this is an inner text/icon node
-    const clickableParent = element.closest('a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"]') || element;
+    const clickableParent = element.closest('a, button, [role="button"], [role="link"], input[type="submit"], input[type="button"], [jsaction*="click"], [onclick]') || element;
 
     try {
       clickableParent.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
@@ -360,25 +370,54 @@
     clickableParent.style.outline = '3px solid #00f2fe';
 
     const rect = clickableParent.getBoundingClientRect();
-    const clientX = rect.left + rect.width / 2;
-    const clientY = rect.top + rect.height / 2;
+    const clientX = Math.round(rect.left + rect.width / 2);
+    const clientY = Math.round(rect.top + rect.height / 2);
 
-    const eventInit = {
+    const downInit = {
       bubbles: true,
       cancelable: true,
+      composed: true,
       view: window,
+      detail: 1,
+      button: 0,
+      buttons: 1,
       clientX,
       clientY,
       screenX: clientX,
       screenY: clientY
     };
 
-    clickableParent.dispatchEvent(new PointerEvent('pointerdown', eventInit));
-    clickableParent.dispatchEvent(new MouseEvent('mousedown', eventInit));
+    const upInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      detail: 1,
+      button: 0,
+      buttons: 0,
+      clientX,
+      clientY,
+      screenX: clientX,
+      screenY: clientY
+    };
+
+    // Target both direct element and any element right under the coordinates
+    const targetUnderPoint = document.elementFromPoint(clientX, clientY) || clickableParent;
+
+    targetUnderPoint.dispatchEvent(new PointerEvent('pointerdown', downInit));
+    targetUnderPoint.dispatchEvent(new MouseEvent('mousedown', downInit));
     if (typeof clickableParent.focus === 'function') clickableParent.focus();
-    clickableParent.dispatchEvent(new PointerEvent('pointerup', eventInit));
-    clickableParent.dispatchEvent(new MouseEvent('mouseup', eventInit));
-    clickableParent.dispatchEvent(new MouseEvent('click', eventInit));
+    targetUnderPoint.dispatchEvent(new PointerEvent('pointerup', upInit));
+    targetUnderPoint.dispatchEvent(new MouseEvent('mouseup', upInit));
+    targetUnderPoint.dispatchEvent(new MouseEvent('click', upInit));
+
+    if (clickableParent !== targetUnderPoint) {
+      clickableParent.dispatchEvent(new PointerEvent('pointerdown', downInit));
+      clickableParent.dispatchEvent(new MouseEvent('mousedown', downInit));
+      clickableParent.dispatchEvent(new PointerEvent('pointerup', upInit));
+      clickableParent.dispatchEvent(new MouseEvent('mouseup', upInit));
+      clickableParent.dispatchEvent(new MouseEvent('click', upInit));
+    }
 
     if (typeof clickableParent.click === 'function') {
       try { clickableParent.click(); } catch(e) {}
@@ -405,13 +444,14 @@
       } catch(e) {}
     }
 
-    // Direct href navigation fallback for <a> links if framework didn't intercept
-    if (clickableParent.tagName === 'A' && clickableParent.href && !clickableParent.href.startsWith('javascript:')) {
-      if (clickableParent.target === '_blank') {
-        window.open(clickableParent.href, '_blank');
-      } else {
-        window.location.href = clickableParent.href;
-      }
+    // Direct href navigation fallback for <a> links only if genuine external link and not handled by SPA
+    const rawHref = clickableParent.getAttribute('href');
+    if (clickableParent.tagName === 'A' && rawHref && !rawHref.startsWith('#') && !rawHref.startsWith('javascript:') && rawHref !== '') {
+      try {
+        if (clickableParent.target === '_blank') {
+          window.open(clickableParent.href, '_blank');
+        }
+      } catch(e) {}
     }
 
     await sleep(200);
@@ -426,6 +466,7 @@
     } catch(e) {}
     await sleep(150);
 
+    lastInteractedElement = element;
     const prevOutline = element.style.outline;
     element.style.outline = '3px solid #10b981';
 
@@ -435,6 +476,7 @@
     }
 
     if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+      const prevVal = element.value || '';
       const proto = element.tagName === 'INPUT' ? window.HTMLInputElement.prototype : window.HTMLTextAreaElement.prototype;
       const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
@@ -444,14 +486,71 @@
         element.value = text;
       }
 
+      // CRITICAL FOR REACT (GitHub Primer, React 16/17/18/19):
+      // React tracks input value with _valueTracker. If not reset, React thinks value didn't change and drops events!
+      const tracker = element._valueTracker;
+      if (tracker) {
+        tracker.setValue(prevVal);
+      }
+
+      // Try execCommand for native input insertion
+      try {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, text);
+      } catch(e) {}
+
       element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       try {
         element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
       } catch(e) {}
+      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      element.dispatchEvent(new Event('blur', { bubbles: true, composed: true }));
+
+      // Check for Ace Editor (used on Programiz, LeetCode, CodeChef, etc.)
+      const aceContainer = element.closest('.ace_editor') || document.querySelector('.ace_editor');
+      if (aceContainer) {
+        try {
+          const s = document.createElement('script');
+          s.textContent = `
+            try {
+              const el = document.querySelector('.ace_editor');
+              if (el && window.ace) {
+                const ed = window.ace.edit(el);
+                if (ed) {
+                  ed.setValue(${JSON.stringify(text)}, 1);
+                  ed.clearSelection();
+                }
+              }
+            } catch(e) {}
+          `;
+          (document.head || document.documentElement).appendChild(s);
+          s.remove();
+        } catch(e) {}
+
+        try {
+          const ta = aceContainer.querySelector('textarea.ace_text-input') || element;
+          ta.focus();
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
+        } catch(e) {}
+
+        await sleep(300);
+        return;
+      }
     } else if (element.isContentEditable) {
-      element.textContent = text;
-      element.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      // For Gmail/Outlook compose body which uses contenteditable divs
+      element.focus();
+      element.innerHTML = '';
+      try {
+        // Best method: execCommand preserves React/Angular event flow
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, text);
+      } catch(e) {
+        // Fallback: direct textContent set
+        element.textContent = text;
+      }
+      element.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: text, inputType: 'insertText' }));
+      element.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
 
     await sleep(200);
@@ -480,19 +579,106 @@
       element.dispatchEvent(new Event('change', { bubbles: true }));
       element.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
-      // Radio or custom choice element (e.g. GitHub Private/Public radio option)
-      if (element.type === 'radio' || element.type === 'checkbox') {
-        element.checked = true;
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
+      // Radio, checkbox, or custom choice element (e.g. GitHub Private/Public, options, toggles)
+      const valStr = String(value || '').trim().toLowerCase();
+
+      // Locate the actual input/radio
+      let targetRadio = (element.type === 'radio' || element.type === 'checkbox')
+        ? element
+        : (element.querySelector?.('input[type="radio"], input[type="checkbox"], [role="radio"]') ||
+           (element.getAttribute?.('for') ? document.getElementById(element.getAttribute('for')) : null) ||
+           element.closest?.('label')?.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"]'));
+
+      // If still not found and value is specified, search document for radio matching the value
+      if (!targetRadio && valStr) {
+        const matchingInput = document.querySelector(`input[type="radio"][value="${valStr}" i], input[value="${valStr}" i], [role="radio"][data-value="${valStr}" i]`);
+        if (matchingInput) targetRadio = matchingInput;
       }
-      const radioInside = element.querySelector?.('input[type="radio"], input[type="checkbox"]');
-      if (radioInside) {
-        radioInside.checked = true;
-        radioInside.dispatchEvent(new Event('input', { bubbles: true }));
-        radioInside.dispatchEvent(new Event('change', { bubbles: true }));
+
+      if (targetRadio) {
+        try {
+          targetRadio.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch(e) {}
+
+        // Trigger native property setter to satisfy React/Vue/Angular synthetic value tracker
+        if (targetRadio.tagName === 'INPUT') {
+          const proto = window.HTMLInputElement.prototype;
+          const nativeCheckedSetter = Object.getOwnPropertyDescriptor(proto, 'checked')?.set;
+          if (nativeCheckedSetter) {
+            nativeCheckedSetter.call(targetRadio, true);
+          } else {
+            targetRadio.checked = true;
+          }
+        } else if (targetRadio.getAttribute?.('role') === 'radio') {
+          targetRadio.setAttribute('aria-checked', 'true');
+        }
+
+        // Full Pointer & Mouse event chain
+        targetRadio.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+        targetRadio.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+        targetRadio.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+        targetRadio.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+        targetRadio.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+
+        if (typeof targetRadio.click === 'function') {
+          try { targetRadio.click(); } catch(e) {}
+        }
+
+        targetRadio.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        targetRadio.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+
+        // Also trigger any wrapping or associated label
+        const assocLabel = targetRadio.labels?.[0] || targetRadio.closest('label') ||
+                           (targetRadio.id ? document.querySelector(`label[for="${targetRadio.id}"]`) : null);
+        if (assocLabel && assocLabel !== targetRadio) {
+          assocLabel.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          if (typeof assocLabel.click === 'function') {
+            try { assocLabel.click(); } catch(e) {}
+          }
+        }
       }
+
+      // Check for custom dropdown / action menu (e.g. GitHub [Public ▾], ActionMenu, Popover)
+      const isDropdown = element.tagName === 'BUTTON' ||
+                         element.getAttribute('aria-haspopup') ||
+                         element.getAttribute('aria-expanded') !== null ||
+                         element.querySelector?.('svg, [class*="caret"], [class*="arrow"]');
+
+      if (isDropdown && !targetRadio) {
+        console.log('[Content] Triggering custom dropdown button to select option:', valStr);
+        await simulateClick(element);
+        await sleep(400);
+
+        // Find the target option in the newly displayed overlay/menu
+        const menuItems = Array.from(document.querySelectorAll('[role="menuitemradio"], [role="menuitem"], [role="option"], button, li, a, div[role="button"]'));
+        const matchedOption = menuItems.find(opt => {
+          if (!isElementVisible(opt, window.getComputedStyle(opt))) return false;
+          const t = (opt.textContent || opt.getAttribute('aria-label') || opt.getAttribute('data-value') || '').toLowerCase();
+          return t.includes(valStr);
+        });
+
+        if (matchedOption) {
+          console.log('[Content] Selecting option inside dropdown menu:', matchedOption);
+          await simulateClick(matchedOption);
+          await sleep(300);
+          return;
+        }
+      }
+
+      if (element.tagName === 'LABEL' || element.getAttribute('role') === 'radio') {
+        if (typeof element.click === 'function') {
+          try { element.click(); } catch(e) {}
+        }
+      }
+
       await simulateClick(element);
+
+      // Post-selection validation: ensure radio is actually checked
+      if (valStr && targetRadio && targetRadio.tagName === 'INPUT' && !targetRadio.checked) {
+        targetRadio.checked = true;
+        try { targetRadio.click(); } catch(e) {}
+        targetRadio.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      }
     }
   }
 
@@ -525,6 +711,187 @@
       .trim().toLowerCase();
 
     if (!rawTarget) return null;
+
+    // Direct high-accuracy selectors for email/compose actions
+    if (rawTarget.includes('compose')) {
+      const composeBtn = document.querySelector('div[gh="cm"], .T-I-KE, [data-tooltip="Compose"], [aria-label="Compose"], [aria-label*="Compose"]')
+        || Array.from(document.querySelectorAll('button, div[role="button"], a')).find(el => {
+             const t = (el.textContent || el.getAttribute('aria-label') || '').toLowerCase().trim();
+             return t === 'compose' || t.startsWith('compose');
+           });
+      if (composeBtn) {
+        console.log('[Content] Matched Compose button via direct selector:', composeBtn);
+        return composeBtn;
+      }
+    }
+
+    if (rawTarget.includes('recipient') || rawTarget.includes('to')) {
+      const toInput = document.querySelector('input[aria-label*="To"], input.agP, [aria-label*="recipients"], textarea[name="to"], input[name="to"], input[peoplekit-id], div[aria-label*="To"] input, td.Ao input, div[role="dialog"] input[role="combobox"]')
+        || Array.from(document.querySelectorAll('input, textarea')).find(el => {
+             const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || '').toLowerCase();
+             return (lbl.includes('to') || lbl.includes('recipient')) && !lbl.includes('search');
+           });
+      if (toInput) {
+        console.log('[Content] Matched recipient input via direct selector:', toInput);
+        return toInput;
+      }
+    }
+
+    if (rawTarget.includes('subject')) {
+      const subjInput = document.querySelector('input[name="subjectbox"], input[placeholder*="Subject"], input[aria-label*="Subject"], input[aria-label*="subject"], div[role="dialog"] input[name="subjectbox"]')
+        || Array.from(document.querySelectorAll('input')).find(el => {
+             const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || '').toLowerCase();
+             return lbl.includes('subject');
+           });
+      if (subjInput) {
+        console.log('[Content] Matched subject input via direct selector:', subjInput);
+        return subjInput;
+      }
+    }
+
+    if (rawTarget.includes('body') || rawTarget.includes('message') || rawTarget.includes('content') || rawTarget.includes('text')) {
+      const bodyInput = document.querySelector('div[aria-label="Message Body"], div[role="textbox"][g_editable="true"], div.editable, div[aria-label*="Message Body"], div[contenteditable="true"]')
+        || Array.from(document.querySelectorAll('div[contenteditable="true"], textarea')).find(el => {
+             const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || '').toLowerCase();
+             return lbl.includes('body') || lbl.includes('message') || el.isContentEditable;
+           });
+      if (bodyInput) {
+        console.log('[Content] Matched message body via direct selector:', bodyInput);
+        return bodyInput;
+      }
+    }
+
+    if (rawTarget.includes('code') || rawTarget.includes('editor')) {
+      const codeEditor = document.querySelector('.ace_text-input, textarea.ace_text-input, .ace_content, .monaco-editor textarea, div[role="textbox"], textarea');
+      if (codeEditor) return codeEditor;
+    }
+
+    if (rawTarget.includes('run') || rawTarget.includes('compile') || rawTarget.includes('execute')) {
+      const runBtn = document.querySelector('#run-btn, button.run, [data-testid*="run"], button[aria-label*="run" i]')
+        || Array.from(document.querySelectorAll('button')).find(btn => {
+             const t = (btn.textContent || btn.getAttribute('aria-label') || '').toLowerCase().trim();
+             return t === 'run' || t.startsWith('run') || t.includes('compile');
+           });
+      if (runBtn) return runBtn;
+    }
+
+    if (rawTarget.includes('search result') || rawTarget.includes('top result') || rawTarget.includes('first result') || rawTarget.includes('first video') || rawTarget.includes('first item') || rawTarget.includes('first product') || rawTarget.includes('top findings')) {
+      const topLink = document.querySelector(
+        '#search a:has(h3), .g a:has(h3), [data-sokoban-container] a:has(h3), a:has(h3), #rso a:has(h3), #rso a, div[data-component-type="s-search-result"] h2 a, .s-result-item h2 a, div[data-cy="title-recipe"] a, ytd-video-renderer a#thumbnail, ytd-video-renderer h3 a, ytd-rich-item-renderer a#thumbnail, [data-testid="results-list"] a, div[data-testid="results-list"] div[data-testid="search-result"] a, a[data-testid="search-result-title"], a.Link__StyledLink-sc-nb9098-0, div.search-title a, a.v-align-middle, div.f4.text-normal a, ul.repo-list li a, a[href*="/"][data-testid*="result"]'
+      );
+      if (topLink) {
+        console.log('[Content] Matched top search result link:', topLink);
+        try {
+          topLink.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          topLink.style.outline = '3px solid #f43f5e';
+          topLink.style.boxShadow = '0 0 20px rgba(244, 63, 94, 0.7)';
+          topLink.style.borderRadius = '6px';
+          topLink.style.transition = 'all 0.3s ease';
+          setTimeout(() => {
+            try {
+              topLink.style.outline = '';
+              topLink.style.boxShadow = '';
+            } catch(e) {}
+          }, 3800);
+        } catch(e) {}
+        return topLink;
+      }
+    }
+
+    if (rawTarget.includes('presentation') || rawTarget.includes('template')) {
+      const presBtn = document.querySelector(
+        'button[aria-label*="Presentation" i], a[href*="presentation" i], div[role="button"][aria-label*="Presentation" i], button[aria-label*="blank" i], a[href*="category=tACFat6cqQI"], button:has(div)'
+      ) || Array.from(document.querySelectorAll('button, a, div[role="button"]')).find(el => {
+        const t = (el.textContent || el.getAttribute('aria-label') || '').toLowerCase().trim();
+        return t.includes('presentation (16:9)') || t === 'presentation' || t.includes('create a blank presentation') || t.includes('blank presentation');
+      });
+      if (presBtn) {
+        console.log('[Content] Matched Presentation template button:', presBtn);
+        return presBtn;
+      }
+    }
+
+    if (rawTarget.includes('repo') || rawTarget.includes('repository')) {
+      const repoInput = document.querySelector(
+        '#repository_name, input[name="repository[name]"], input[data-testid="repository-name-input"], input[aria-label*="Repository name" i], input[aria-describedby*="RepoName"], input[id*="repository_name"]'
+      ) || Array.from(document.querySelectorAll('input[type="text"], input:not([type])')).find(el => {
+        const lbl = (el.getAttribute('aria-label') || el.name || el.placeholder || el.id || '').toLowerCase();
+        const parent = (el.closest('div, dl, fieldset, section')?.textContent || '').toLowerCase();
+        return lbl.includes('repo') || parent.includes('repository name');
+      });
+      if (repoInput) {
+        console.log('[Content] Matched repository name input via direct selector:', repoInput);
+        return repoInput;
+      }
+    }
+
+    if (rawTarget.includes('search') || rawTarget.includes('query') || rawTarget.includes('find')) {
+      if (step.action === 'click' || rawTarget.includes('submit') || rawTarget.includes('button') || rawTarget.includes('icon') || rawTarget.includes('go')) {
+        const searchBtn = document.querySelector(
+          '#nav-search-submit-button, input#nav-search-submit-button, button#search-icon-legacy, input[name="btnK"], form input[type="submit"], form button[type="submit"], button[aria-label*="search" i], .nav-search-submit, .search-btn, .search-button, button.nav-search-submit'
+        ) || Array.from(document.querySelectorAll('button, input[type="submit"]')).find(b => {
+          const t = (b.textContent || b.getAttribute('aria-label') || b.id || '').toLowerCase();
+          return t.includes('search') || t.includes('go');
+        });
+        if (searchBtn) {
+          console.log('[Content] Matched search submit button via direct selector:', searchBtn);
+          return searchBtn;
+        }
+      }
+
+      const searchInput = document.querySelector(
+        '#twotabsearchtextbox, input#nav-search-keywords, input[name="field-keywords"], input[name="q"], input[type="search"], input[name="search"], input[aria-label*="Search" i], input[placeholder*="Search" i], textarea[name="q"]'
+      ) || Array.from(document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')).find(el => {
+        const lbl = (el.getAttribute('aria-label') || el.placeholder || el.name || el.id || '').toLowerCase();
+        return lbl.includes('search') || lbl.includes('query');
+      });
+      if (searchInput) {
+        console.log('[Content] Matched search input via direct selector:', searchInput);
+        return searchInput;
+      }
+    }
+
+    if (rawTarget.includes('private') || (step.value && String(step.value).toLowerCase() === 'private')) {
+      // Check for visibility dropdown button on modern GitHub / UI (e.g. [Public ▾] next to Choose visibility)
+      const visDropdownBtn = Array.from(document.querySelectorAll('button')).find(btn => {
+        const text = (btn.textContent || btn.getAttribute('aria-label') || '').toLowerCase();
+        const containerText = (btn.closest('div, section, fieldset')?.textContent || '').toLowerCase();
+        return (text.includes('public') || text.includes('private') || text.includes('visibility')) && containerText.includes('visibility');
+      });
+      if (visDropdownBtn) {
+        console.log('[Content] Matched visibility dropdown trigger:', visDropdownBtn);
+        return visDropdownBtn;
+      }
+
+      const privateRadio = document.querySelector('input[type="radio"][value="private"], input[value="private"], #repository_visibility_private, [aria-label*="Private"], input[id*="private"]')
+        || Array.from(document.querySelectorAll('label, div[role="radio"], [role="radio"]')).find(el => {
+             const t = (el.textContent || '').toLowerCase();
+             return t.includes('private') && !t.includes('public');
+           });
+      if (privateRadio) {
+        console.log('[Content] Matched Private radio option:', privateRadio);
+        return privateRadio;
+      }
+    }
+
+    if (rawTarget.includes('public') || (step.value && String(step.value).toLowerCase() === 'public')) {
+      const visDropdownBtn = Array.from(document.querySelectorAll('button')).find(btn => {
+        const text = (btn.textContent || btn.getAttribute('aria-label') || '').toLowerCase();
+        const containerText = (btn.closest('div, section, fieldset')?.textContent || '').toLowerCase();
+        return (text.includes('public') || text.includes('private') || text.includes('visibility')) && containerText.includes('visibility');
+      });
+      if (visDropdownBtn) return visDropdownBtn;
+
+      const publicRadio = document.querySelector('input[type="radio"][value="public"], input[value="public"], #repository_visibility_public, [aria-label*="Public"], input[id*="public"]')
+        || Array.from(document.querySelectorAll('label, div[role="radio"], [role="radio"]')).find(el => {
+             const t = (el.textContent || '').toLowerCase();
+             return t.includes('public') && !t.includes('private');
+           });
+      if (publicRadio) {
+        console.log('[Content] Matched Public radio option:', publicRadio);
+        return publicRadio;
+      }
+    }
 
     const candidates = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], div[onclick], span[onclick], iframe, [tabindex]'));
     let best = null;
@@ -590,6 +957,10 @@
       // Robust Semantic Recovery: find matching element on live page if tag_id mapping shifted
       if (!targetNode && (step.description || step.intent || step.value)) {
         targetNode = findElementSemantically(step);
+        if (!targetNode) {
+          await sleep(400);
+          targetNode = findElementSemantically(step);
+        }
       }
 
       const result = {
@@ -604,21 +975,33 @@
       try {
         switch (step.action) {
           case 'click':
-            if (!targetNode) throw new Error(`Target tag_id #${step.tag_id} vanished or not found in DOM`);
+            if (!targetNode) {
+              result.success = false;
+              result.error = `Target element #${step.tag_id} not found in DOM`;
+              break;
+            }
             await simulateClick(targetNode);
             result.success = true;
             result.page_changed = true;
             break;
 
           case 'type':
-            if (!targetNode) throw new Error(`Target tag_id #${step.tag_id} vanished or not found for typing`);
+            if (!targetNode) {
+              result.success = false;
+              result.error = `Target element #${step.tag_id} not found for typing`;
+              break;
+            }
             await simulateType(targetNode, step.value || '');
             result.success = true;
             result.page_changed = true;
             break;
 
           case 'select':
-            if (!targetNode) throw new Error(`Target tag_id #${step.tag_id} vanished for dropdown select`);
+            if (!targetNode) {
+              result.success = false;
+              result.error = `Target element #${step.tag_id} not found for dropdown select`;
+              break;
+            }
             await simulateSelect(targetNode, step.value);
             result.success = true;
             result.page_changed = true;
@@ -638,12 +1021,46 @@
             result.success = true;
             break;
 
-          case 'press_key':
-            document.activeElement?.dispatchEvent(
-              new KeyboardEvent('keydown', { key: step.value || 'Enter', bubbles: true })
-            );
+          case 'press_key': {
+            const keyName = step.key || step.value || 'Enter';
+            const keyCode = keyName === 'Enter' ? 13 : (keyName === 'Tab' ? 9 : 0);
+            const keyInit = { key: keyName, code: keyName, keyCode, which: keyCode, bubbles: true, cancelable: true };
+            const target = (document.activeElement && document.activeElement !== document.body) ? document.activeElement : (lastInteractedElement || document.body);
+            target.dispatchEvent(new KeyboardEvent('keydown', keyInit));
+            target.dispatchEvent(new KeyboardEvent('keypress', keyInit));
+            target.dispatchEvent(new KeyboardEvent('keyup', keyInit));
+
+            // CRITICAL FOR WEBSITES (Amazon, YouTube, Google, GitHub, etc.):
+            // Synthetic KeyboardEvent('Enter') does NOT trigger browser default form submission.
+            // Actively locate and tap the search icon / submit button or trigger form.requestSubmit().
+            if (keyName === 'Enter') {
+              const form = (target && target.tagName === 'FORM') ? target : (target.form || target.closest?.('form'));
+              let submitBtn = form?.querySelector?.('#nav-search-submit-button, input[type="submit"], button[type="submit"], button[aria-label*="search" i], .nav-search-submit, button:has(svg)');
+              if (!submitBtn) {
+                submitBtn = document.querySelector('#nav-search-submit-button, input#nav-search-submit-button, button#search-icon-legacy, input[name="btnK"], form input[type="submit"], form button[type="submit"], button[aria-label*="search" i], .search-btn, .search-button, button.nav-search-submit');
+              }
+
+              if (submitBtn) {
+                console.log('[Content] Tapping search icon / submit button on Enter:', submitBtn);
+                await simulateClick(submitBtn);
+              } else if (form) {
+                try {
+                  if (typeof form.requestSubmit === 'function') {
+                    form.requestSubmit();
+                  } else {
+                    form.submit();
+                  }
+                } catch(e) {
+                  try { form.submit(); } catch(ex) {}
+                }
+              }
+            }
+
             result.success = true;
+            result.page_changed = true;
             break;
+          }
+
 
           case 'navigate':
             if (step.value) {
@@ -674,9 +1091,8 @@
             throw new Error(`Unsupported action type: ${step.action}`);
         }
       } catch (err) {
-        console.error(`[Content] Step #${stepIndex} halted:`, err.message);
         result.success = false;
-        result.error = err.message;
+        result.error = err?.message || 'Action execution error';
       }
 
       executedResults.push(result);
@@ -691,7 +1107,7 @@
 
       // Halt on failure so agent re-reasons with fresh page state
       if (!result.success) {
-        console.warn(`[Content] Aborting remaining plan steps. Succeeded: ${i}/${actions.length}`);
+        console.log(`[Content] Halting plan on step #${stepIndex}: ${result.error || 'Failed'}`);
         break;
       }
 
@@ -704,6 +1120,11 @@
   // Runtime message handler
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     switch (message.type) {
+      case 'ping': {
+        sendResponse({ status: 'pong' });
+        break;
+      }
+
       case 'extract_dom': {
         const domData = extractInteractiveElements(message.force_full);
         if (message.render_overlays) {
@@ -723,6 +1144,12 @@
       case 'hide_overlays': {
         clearNumberedOverlays();
         sendResponse({ success: true });
+        break;
+      }
+
+      case 'scan_pii': {
+        const sensitive = window.PIIDetector ? window.PIIDetector.scanDOM() : [];
+        sendResponse({ sensitive_nodes: sensitive });
         break;
       }
 

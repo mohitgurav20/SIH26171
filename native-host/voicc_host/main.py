@@ -33,6 +33,7 @@ from .decision_log import DecisionLogger, summarize, verify_chain
 from .errors import ProtocolError, VoiccError
 from .ollama_client import OllamaClient
 from .perception import DomProvider, PerceptionLadder, VisionProvider
+from .prompts import build_agent_step_prompt
 from .protocol import (MessageWriter, install_stdio_guard, iter_messages)
 from .request_queue import QueuedRequest, RequestQueue
 from .schemas import PageState, PerceptionTier, Plan
@@ -189,6 +190,14 @@ class Host:
                                      **summarize(self.logger.path)})
             return
 
+        if kind == "agent_step":
+            self._handle_agent_step(message_id, message)
+            return
+
+        if kind in ("action_result", "dom_data", "screenshot"):
+            self._reply(message_id, {"type": "ack", "status": "received"})
+            return
+
         if kind in ("command", "voice", "confirm"):
             try:
                 request = self.queue.submit(kind, {**message,
@@ -215,6 +224,109 @@ class Host:
             self.writer.send({"type": "error", "code": "protocol_error",
                               "message": exc.user_message,
                               "in_reply_to": message_id})
+
+    def _handle_agent_step(self, message_id: str, message: dict) -> None:
+        """Live-screen VLM + LLM agentic step handler.
+        Uses Moondream to comprehend visual screen state + Qwen2.5 to decide actions.
+        """
+        def _worker():
+            try:
+                goal = str(message.get("goal", "")).strip()
+                page_url = str(message.get("page_url", "")).strip()
+                page_title = str(message.get("page_title", "")).strip()
+                elements = message.get("elements") or []
+                history = message.get("history") or []
+                screenshot_b64 = message.get("screenshot_b64", "")
+
+                vlm_summary = ""
+                # Step 1: Visual Perception with Moondream (only if vision model is configured and installed)
+                vision_model = self.client.config.models.vision if hasattr(self.client, 'config') else ""
+                if screenshot_b64 and len(screenshot_b64) > 100 and vision_model:
+                    try:
+                        vlm_resp = self.client.generate(
+                            role="vision",
+                            prompt=f"Describe what is visible on screen, open dialogs, forms, or buttons relevant to: {goal}. Keep it concise in 2 sentences.",
+                            images=[screenshot_b64],
+                            options={"temperature": 0.2}
+                        )
+                        vlm_summary = vlm_resp.text.strip()
+                    except Exception as e:
+                        log.warning("Moondream VLM call failed: %s", e)
+
+                # Step 2: Reasoning with Qwen2.5
+                prompt = build_agent_step_prompt(
+                    goal=goal,
+                    page_url=page_url,
+                    page_title=page_title,
+                    elements=elements,
+                    vlm_summary=vlm_summary,
+                    history=history
+                )
+
+                llm_resp = self.client.generate(
+                    role="text",
+                    prompt=prompt,
+                    schema={
+                        "type": "object",
+                        "properties": {
+                            "actions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "tag_id": {"type": ["integer", "null"]},
+                                        "value": {"type": "string"},
+                                        "key": {"type": "string"},
+                                        "intent": {"type": "string"}
+                                    },
+                                    "required": ["type"]
+                                }
+                            },
+                            "reasoning": {"type": "string"},
+                            "is_done": {"type": "boolean"}
+                        },
+                        "required": ["actions", "reasoning", "is_done"]
+                    },
+                    options={"temperature": 0.1, "top_p": 0.9}
+                )
+
+                parsed = {}
+                try:
+                    import json
+                    parsed = json.loads(llm_resp.text)
+                except Exception:
+                    import re
+                    m = re.search(r"\{.*\}", llm_resp.text, re.DOTALL)
+                    if m:
+                        try:
+                            import json
+                            parsed = json.loads(m.group(0))
+                        except Exception:
+                            pass
+
+                actions = parsed.get("actions", [])
+                reasoning = parsed.get("reasoning", "")
+                is_done = parsed.get("is_done", False)
+
+                self._reply(message_id, {
+                    "type": "agent_step_result",
+                    "actions": actions,
+                    "reasoning": reasoning,
+                    "vlm_summary": vlm_summary,
+                    "is_done": is_done,
+                    "model": llm_resp.model,
+                    "latency_ms": round(llm_resp.total_ms, 1)
+                })
+            except Exception as exc:
+                log.exception("agent_step execution failed")
+                self._reply(message_id, {
+                    "type": "error",
+                    "code": "agent_step_error",
+                    "message": str(exc)
+                })
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _handle_set_model(self, message_id: str, message: dict) -> None:
         """Phase 122 -- swap a role's model without restarting the host."""

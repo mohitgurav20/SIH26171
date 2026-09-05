@@ -43,15 +43,15 @@ class ModelConfig:
     """Frozen model choices (phase 82 writes the final values here)."""
 
     # Fast first-pass planner. Whole value proposition is speed.
-    draft: str = _env("VOICC_DRAFT_MODEL", "qwen2.5:0.5b-instruct-q4_K_M")
+    draft: str = _env("VOICC_DRAFT_MODEL", "qwen2.5:0.5b")
     # Full text reasoner, used when the draft model is not confident.
-    text: str = _env("VOICC_TEXT_MODEL", "qwen2.5:3b-instruct-q4_K_M")
-    # Vision model, used only when the DOM path cannot ground the action.
-    vision: str = _env("VOICC_VISION_MODEL", "qwen2-vl:2b-instruct-q4_K_M")
+    text: str = _env("VOICC_TEXT_MODEL", "qwen2.5:3b")
+    # Vision model: disabled (moondream not installed — use DOM-only perception).
+    vision: str = _env("VOICC_VISION_MODEL", "")
     # Optional larger vision model behind the high-accuracy toggle (117).
     vision_fallback: str = _env("VOICC_VISION_FALLBACK_MODEL", "")
     # Local embedding model used by Siddu's memory layer.
-    embed: str = _env("VOICC_EMBED_MODEL", "nomic-embed-text")
+    embed: str = _env("VOICC_EMBED_MODEL", "nomic-embed-text:latest")
 
     def all_models(self) -> list[str]:
         return [m for m in (self.draft, self.text, self.vision,
